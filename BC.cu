@@ -6,6 +6,7 @@
 #include <string.h>
 #include <iomanip>  // 需要包含這個頭文件以使用 setprecision
 #include <cuda_runtime.h>
+#include "device_atomic_functions.h"
 #endif
 #include <vector>
 using namespace std;
@@ -71,7 +72,7 @@ void brandes_ORIGIN(const CSR& csr, int V, vector<float> &BC);
 void brandes_ORIGIN_for_Seq(const CSR& csr, int V, vector<float> &BC);
 void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC);
 void brandes_SS_par(const CSR& csr, int V, float *BC);
-
+void brandes_MS_par(const CSR& csr, int max_multi, float* BC);
 
 
 
@@ -98,12 +99,13 @@ int main(int argc, char* argv[]){
     time2 = seconds();
     printf("done brandes_ORIGIN\n");
     multi_time1 = seconds();
-    // int max_multi=8;
+    int max_multi=2;
     // Seq_multi_source_brandes( *csr , max_multi , my_BC );
     // brandes_ORIGIN_OMP(*csr,csr->csrVSize,my_BC);
     // showCSR(csr);
     // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,my_BC);
-    brandes_SS_par(*csr,csr->csrVSize,ans_para);
+    // brandes_SS_par(*csr,csr->csrVSize,ans_para);
+    brandes_MS_par(*csr , max_multi , ans_para);
     multi_time2 = seconds();
     printf("done brandes_SS_par\n");
     // computeBC_shareBased(csr,my_BC);
@@ -112,7 +114,7 @@ int main(int argc, char* argv[]){
     for(int i=0;i<csr->csrVSize;i++){
         ans_para_vec[i]=ans_para[i];
     }
-    check_ans(ans,ans_para_vec);
+    // check_ans(ans,my_BC);
     
     // for(auto i=0;i<csr->csrVSize/2;i++){
     //     printf("ans_para_vec[%d]: %f | %f\n",i,ans[i],ans_para_vec[i]);
@@ -280,7 +282,7 @@ void brandes_ORIGIN(const CSR& csr, int V, vector<float> &BC) {
 
 void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) {
     // Start timing
-    multi_time_start = seconds();
+    // multi_time_start = seconds();
 
     int v_size = csr.csrVSize;
     int* map_S = (int*)malloc(sizeof(int) * max_multi); // Multiple sources
@@ -289,16 +291,16 @@ void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) 
     size_t multi_size = v_size * max_multi;
 
     int* s_size = (int*)malloc(sizeof(int) * v_size);
-    int* dist_MULTI = (int*)malloc(sizeof(int) * multi_size);
+    float* dist_MULTI = (float*)malloc(sizeof(float) * multi_size);
     float* sigma_MULTI = (float*)malloc(sizeof(float) * multi_size);
     float* delta_MULTI = (float*)malloc(sizeof(float) * multi_size);
 
     Q_struct** s = (Q_struct**)malloc(v_size * sizeof(Q_struct*));
-    Q_struct* currentQueue = (Q_struct*)malloc(v_size * sizeof(Q_struct));
-    Q_struct* nextQueue = (Q_struct*)malloc(v_size * sizeof(Q_struct));
+    Q_struct* f1 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
+    Q_struct* f2 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
 
     // Pre-initialize dist_MULTI to INFINITE
-    int* dist_INIT = (int*)malloc(sizeof(int) * multi_size);
+    float* dist_INIT = (float*)malloc(sizeof(float) * multi_size);
     
     for (size_t i = 0; i < multi_size; i++) {
         dist_INIT[i] = INFINITE;
@@ -307,7 +309,7 @@ void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) 
     for (int sourceID = csr.startNodeID; sourceID <= csr.endNodeID; ++sourceID) {
         if (nodeDone[sourceID]) continue;
 
-        multi_time1 = seconds();
+        // multi_time1 = seconds();
 
         nodeDone[sourceID] = true;
         int mappingCount = 0;
@@ -323,7 +325,7 @@ void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) 
         }
 
         // Initialize dist_MULTI, sigma_MULTI, delta_MULTI
-        memcpy(dist_MULTI, dist_INIT, sizeof(int) * multi_size);
+        memcpy(dist_MULTI, dist_INIT, sizeof(float) * multi_size);
         memset(sigma_MULTI, 0, sizeof(float) * multi_size);
         memset(delta_MULTI, 0, sizeof(float) * multi_size);
         memset(s_size, 0, sizeof(int) * v_size);
@@ -337,20 +339,31 @@ void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) 
             int sourceNode = map_S[i];
             int position = mappingCount * sourceNode + i;
             sigma_MULTI[position] = 1.0;
-            dist_MULTI[position] = 0;
+            dist_MULTI[position] = 0.0;
 
-            currentQueue[f1_indicator].nodeID = sourceNode;
-            currentQueue[f1_indicator].traverse_S = (1ULL << i);
+            f1[f1_indicator].nodeID = sourceNode;
+            f1[f1_indicator].traverse_S = (1ULL << i);
             f1_indicator++;
         }
 
         // Initialize nextQueue traverse_S to zero
         for (int i = 0; i < v_size; i++) {
-            nextQueue[i].traverse_S = 0;
+            f2[i].traverse_S = 0;
         }
 
-        Q_struct* tempQueue;
+        int level=0;
         while (f1_indicator > 0) {
+
+            Q_struct* currentQueue;
+            Q_struct* nextQueue;
+            if(level% 2 == 0){
+                currentQueue = f1;
+                nextQueue = f2;
+            }
+            else{
+                currentQueue = f2;
+                nextQueue = f1;
+            }
             // Store currentQueue into s[s_indicator]
             s[s_indicator] = (Q_struct*)malloc(f1_indicator * sizeof(Q_struct));
             memcpy(s[s_indicator], currentQueue, f1_indicator * sizeof(Q_struct));
@@ -397,21 +410,18 @@ void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) 
             }
 
             // Swap currentQueue and nextQueue
-            tempQueue = currentQueue;
-            currentQueue = nextQueue;
-            nextQueue = tempQueue;
             f1_indicator = f2_indicator;
             f2_indicator = 0;
-
+            level++;
             // Reset nextQueue traverse_S for next iteration
             // for (int i = 0; i < f1_indicator; i++) {
             //     nextQueue[i].traverse_S = 0;
             // }
         }
 
-        multi_time2 = seconds();
-        multi_forward_Time += (multi_time2 - multi_time1);
-        multi_time1 = seconds();
+        // multi_time2 = seconds();
+        // multi_forward_Time += (multi_time2 - multi_time1);
+        // multi_time1 = seconds();
 
         // Back-propagation
         for (int layer = s_indicator - 1; layer >= 0; layer--) {
@@ -448,12 +458,12 @@ void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) 
             free(s[layer]);
         }
 
-        multi_time2 = seconds();
-        multi_backward_Time += (multi_time2 - multi_time1);
+        // multi_time2 = seconds();
+        // multi_backward_Time += (multi_time2 - multi_time1);
     }
 
-    multi_time_end = seconds();
-    multi_total_time = (multi_time_end - multi_time_start);
+    // multi_time_end = seconds();
+    // multi_total_time = (multi_time_end - multi_time_start);
 
     // Free memory
     free(s_size);
@@ -463,8 +473,8 @@ void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) 
     free(map_S);
     free(nodeDone);
     free(s);
-    free(currentQueue);
-    free(nextQueue);
+    free(f1);
+    free(f2);
     free(dist_INIT);
 }
 
@@ -643,6 +653,21 @@ __device__ __forceinline__ float atomicMinFloat (float * addr, float value){
      return old;
 }
 
+
+__device__  __forceinline__ void atomicOr64(uint64_t* address, uint64_t val) {
+    uint32_t* address_as_ui = (uint32_t*)address;
+    uint32_t old_lo, old_hi, new_lo, new_hi;
+
+    // 循環直到成功進行原子操作
+    do {
+        old_lo = address_as_ui[0];
+        old_hi = address_as_ui[1];
+        new_lo = old_lo | (uint32_t)(val);
+        new_hi = old_hi | (uint32_t)(val >> 32);
+    } while ((atomicCAS(address_as_ui, old_lo, new_lo) != old_lo) || 
+             (atomicCAS(address_as_ui + 1, old_hi, new_hi) != old_hi));
+}
+
 __global__ void allBC(int* g_csrV,int* g_csrE ,int* nextQueueSize,int* currentQueue,int* nextQueue,float* dist,int* sigma,int blocknum,int j,int size){
 
     register const int bid = blockIdx.x + j * blocknum; // 0 + 0 * INT_MAX
@@ -715,6 +740,8 @@ __global__ void sum_BC_Result(float* result,float* delta,int size,int s){
         
 
 }
+
+
 
 void brandes_SS_par(const CSR& csr, int V, float *BC) {
 
@@ -792,7 +819,6 @@ void brandes_SS_par(const CSR& csr, int V, float *BC) {
                     allBC<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist,g_sigma,INT_MAX,i,currentQueueSize);
 
             CHECK(cudaDeviceSynchronize());
-            
             cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost);
             cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(int),cudaMemcpyDeviceToDevice);
             cudaMemset(g_nextQueueSize,0,sizeof(int));
@@ -836,4 +862,455 @@ void brandes_SS_par(const CSR& csr, int V, float *BC) {
     cudaFree(g_f2);
     cudaFree(g_nextQueueSize);
     cudaFree(g_BC);
+}
+
+__global__ void resetBC_value_MS(float* dist,Q_struct* f1,int* sigma,float* delta,Q_struct* stack,int target,int size){
+
+    register const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    
+    if(idx < size){
+        dist[idx] = 1<<20;
+        sigma[idx] = 0;
+        delta[idx] = 0.0f;
+        f1[idx].nodeID = -1;
+        f1[idx].traverse_S=0;
+    }
+    // f1[0].nodeID = target;
+    // stack[0].nodeID = target;
+    // if(idx == target){
+    //     dist[idx] = 0.0f;
+    //     sigma[idx] = 1;
+    // }
+}
+
+__global__ void INITIAL_value_MS(float* dist,Q_struct* f1,int* sigma,int* g_map_S,int size){
+
+    register const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    
+    if(idx < size){
+        register const int sourceID = g_map_S[idx];
+        register const int position = size * sourceID + idx; //size:mapping count
+        printf("position: %d idx: %d\n",position,idx);
+        sigma[position]=1;
+        dist[position]=0.0f;
+        f1[idx].nodeID = sourceID;
+        f1[idx].traverse_S=1ULL << idx;
+    }
+    // f1[0].nodeID = target;
+    // stack[0].nodeID = target;
+    // if(idx == target){
+    //     dist[idx] = 0.0f;
+    //     sigma[idx] = 1;
+    // }
+}
+
+__device__ inline uint64_t atomicOrULL(uint64_t* address, uint64_t val) {
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    return atomicOr(address_as_ull, (unsigned long long int)val);
+}
+
+
+__global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* currentQueue,Q_struct* nextQueue,float* dist,int* sigma,int blocknum,int j,int size, int mappingcount){
+
+    register const int bid = blockIdx.x + j * blocknum; // 0 + 0 * INT_MAX
+
+    if(bid > size || currentQueue[bid].nodeID == -1) return; //大於currentQueueSize
+    
+    register const int node = currentQueue[bid].nodeID;
+    register const int degree = g_csrV[node+1] - g_csrV[node];
+    register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0)); //需要看的鄰居，疊代次數
+    register float     old;
+    // printf("bid: %d,node: %d ,degree: %d, blockDim.x: %d\n",bid,node,degree,blockDim.x);
+    for(int i=0;i<threadOffset;i++){
+        register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x; //該點node的鄰居位置
+        uint64_t traverse_S = currentQueue[bid].traverse_S; //我改這裡
+        if(position < g_csrV[node+1] ){
+            register const int neighborNodeID = g_csrE[position];
+            
+            
+            for (int multi_node = 0; multi_node < mappingcount; multi_node++) {
+                // printf("multi_node: %d \n",multi_node);
+                if (traverse_S & (1ULL << multi_node)) {
+                    register const int position_v = mappingcount * node           + multi_node;
+                    register const int position_n = mappingcount * neighborNodeID + multi_node;
+                    // printf("node: %d ,neighbor: %d,pos_v: %d,pos_n: %d ,multi_node:%d\n",node,neighborNodeID,position_v,position_n,multi_node);
+                    // 更新 dist_MULTI 和 sigma_MULTI
+                    if (dist[position_n] == dist[position_v] + 1) {
+                        atomicAdd(&sigma[position_n], sigma[position_v]);
+                    }
+                    
+                    if (dist[position_n] > dist[position_v] + 1) {
+                        old = atomicMinFloat(&dist[position_n], (dist[position_v] + 1.0));
+                        
+                        if(old != dist[position_n]){
+                            sigma[position_n] = sigma[position_v];
+                            // 检查 neighborNodeID 是否已在 nextQueue 中
+                            // printf("node: %d ,neighbor: %d, n_dist: %.0f\n",node,neighborNodeID,dist[position_n]);
+                            bool found = false;
+
+                            // printf("Queue_size: %d\n",*nextQueueSize);
+                            for (int find = 0; find < *nextQueueSize; find++) {
+                                // printf("enxtQueue[find].nodeID: %d\t neighborNodeID: %d\n",nextQueue[find].nodeID,neighborNodeID);
+                                if (nextQueue[find].nodeID == neighborNodeID) {
+                                    // atomicOr64(&nextQueue[find].traverse_S, (1ULL << multi_node));
+                                    atomicOrULL(&nextQueue[find].traverse_S, (1ULL << multi_node));
+                                    // nextQueue[find].traverse_S|=(1ULL << multi_node);
+                                    found = true;
+                                    break;
+                                }
+                            }
+
+                            // 若 neighborNodeID 不在 nextQueue 中，则插入
+                            if (!found) {
+                                int next = atomicAdd(nextQueueSize,1);
+                                printf("nextQueueSize: %d\n",*nextQueueSize);
+                                nextQueue[next].nodeID = __ldg(&g_csrE[position]);
+                                nextQueue[next].traverse_S |= (1ULL << multi_node);
+                            }
+                        
+                        }
+
+                        // dist[position_n] = dist[position_v] + 1;
+                        // sigma[position_n] = sigma[position_v];
+                    }
+
+
+                }
+            }    
+        }
+    }
+
+
+    // Process currentQueue
+    // for (auto i = 0; i < f1_indicator; i++) {
+    //     int v = currentQueue[i].nodeID;
+    //     uint64_t traverse_S = currentQueue[i].traverse_S
+    //     for (auto neighborIndex = csr.csrV[v]; neighborIndex < csr.csrV[v + 1]; neighborIndex++) {
+    //         int neighborNodeID = csr.csrE[neighborIndex]
+    //         for (auto multi_node = 0; multi_node < mappingCount; multi_node++) {
+    //             if (traverse_S & (1ULL << multi_node)) {
+    //                 int position_v = mappingCount * v + multi_node;
+    //                 int position_n = mappingCount * neighborNodeID + multi_node
+    //                 if (dist_MULTI[position_n] == dist_MULTI[position_v] + 1) {
+    //                     sigma_MULTI[position_n] += sigma_MULTI[position_v];
+    //                 } else if (dist_MULTI[position_n] > dist_MULTI[position_v] + 1) {
+    //                     dist_MULTI[position_n] = dist_MULTI[position_v] + 1;
+    //                     sigma_MULTI[position_n] = sigma_MULTI[position_v]
+    //                     // Check if neighborNodeID is already in nextQueue
+    //                     int found = -1;
+    //                     for (auto find = 0; find < f2_indicator; find++) {
+    //                         if (nextQueue[find].nodeID == neighborNodeID) {
+    //                             found = find;
+    //                             break;
+    //                         }
+    //                     }
+    //                     if (found >= 0) {
+    //                         nextQueue[found].traverse_S |= (1ULL << multi_node);
+    //                     } else {
+    //                         nextQueue[f2_indicator].nodeID = neighborNodeID;
+    //                         nextQueue[f2_indicator].traverse_S = (1ULL << multi_node);
+    //                         f2_indicator++;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+}
+
+
+
+void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
+    // Start timing
+    // multi_time_start = seconds();
+
+    int V = csr.csrVSize;
+    int multi_size = V * max_multi;
+    //CPU variable
+    int    currentQueueSize;
+    int*   stackOffset = (int*)calloc(multi_size,sizeof(int));
+    int*   map_S = (int*)malloc(sizeof(int) * max_multi); // Multiple sources
+    bool*  nodeDone = (bool*)calloc(V, sizeof(bool));
+    //CPU print 專用
+    int*   sigma    = (int*)malloc(sizeof(int) * multi_size);
+    float* dist     = (float*)malloc(sizeof(float) * multi_size);
+    Q_struct*  f1   = (Q_struct*)malloc(sizeof(Q_struct) * V);
+    Q_struct*  queue   = (Q_struct*)malloc(sizeof(Q_struct) * V);
+    //GPU MALLOC　variable
+    Q_struct*   g_stack;       
+    int*   g_sigma;     
+    float* g_dist;
+    int*   g_level;     
+    float* g_delta; 
+    int*   g_S_size;
+    Q_struct*   g_f1;
+    Q_struct*   g_f2;
+    int*   g_nextQueueSize; //用來回傳給CPU判別currentQueueSize，是否繼續traverse
+    int*   g_csrE;
+    int*   g_csrV;
+    int*   g_map_S;   //用來記錄Source對應的node array位置: 0 1 2 -> node 22 15 6
+    float* g_BC;
+
+    // printf("start malloc\n");
+    cudaMalloc((void **)&g_stack,V * sizeof(Q_struct)); //用CPU的stack offset存每一層的位置
+    cudaMalloc((void **)&g_sigma,multi_size * sizeof(int));
+    cudaMalloc((void **)&g_dist,multi_size * sizeof(float));
+    cudaMalloc((void **)&g_level,V * sizeof(int));
+    cudaMalloc((void **)&g_delta,multi_size * sizeof(float));
+    cudaMalloc((void **)&g_S_size,V* sizeof(int));
+    
+    size_t free_byte;
+    size_t total_byte;
+    cudaMemGetInfo(&free_byte,&total_byte);
+    cudaMalloc((void **)&g_f1, free_byte * 0.3);
+    cudaMalloc((void **)&g_f2, free_byte * 0.3);
+    cudaMalloc((void **)&g_nextQueueSize,sizeof(int));
+    cudaMalloc((void **)&g_csrV, V * sizeof(int));
+    cudaMalloc((void **)&g_csrE, csr.csrESize * sizeof(int));
+    cudaMalloc((void **)&g_BC, V * sizeof(float));
+    cudaMalloc((void **)&g_map_S, max_multi * sizeof(int));
+    cudaMemcpy(g_csrV,csr.csrV ,  V * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemcpy(g_csrE,csr.csrE ,  csr.csrESize * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemset(g_BC, 0.0f, V * sizeof(float));
+    // printf("end malloc\n");
+    // std::cout << "Total GPU memory: " << total_byte / (1024.0 * 1024.0) << " MB" << std::endl;
+    // std::cout << "Free GPU memory: " << free_byte / (1024.0 * 1024.0) << " MB" << std::endl;
+    int threadnum = 32;
+
+
+    //origin
+
+    for (int sourceID = csr.startNodeID; sourceID <= csr.startNodeID; ++sourceID) {
+        if (nodeDone[sourceID]) continue;
+
+        // multi_time1 = seconds();
+
+        nodeDone[sourceID] = true;
+        int mappingCount = 0;
+        map_S[mappingCount++] = sourceID;
+
+        // Find other sources
+        for (int neighborIndex = csr.csrV[sourceID]; neighborIndex < csr.csrV[sourceID + 1] && mappingCount < max_multi; neighborIndex++) {
+            int neighborNodeID = csr.csrE[neighborIndex];
+            if (!nodeDone[neighborNodeID]) {
+                map_S[mappingCount++] = neighborNodeID;
+                nodeDone[neighborNodeID] = true;
+            }
+        }
+
+        // Initialize dist_MULTI, sigma_MULTI, delta_MULTI
+        //初始g_f1 queue
+        cudaMemcpy(g_map_S,map_S, mappingCount * sizeof(int),cudaMemcpyHostToDevice);
+        resetBC_value_MS<<<ceil(multi_size/64.0),min(multi_size,64)>>>(g_dist,g_f1,g_sigma,g_delta,g_stack,sourceID,multi_size);
+        cudaMemset(g_nextQueueSize,0,sizeof(int));
+        currentQueueSize = mappingCount;
+        memset(stackOffset, 0, sizeof(int) * multi_size);
+        INITIAL_value_MS<<<ceil(mappingCount/64.0),min(mappingCount,64)>>>(g_dist,g_f1,g_sigma,g_map_S,mappingCount);
+
+        #pragma  region print
+        //檢查GPU資料
+        // cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyHostToHost);
+        // cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyHostToHost);
+        // cudaMemcpy(f1, g_f1,   mappingCount * sizeof(Q_struct),cudaMemcpyDeviceToHost);
+
+        // printf("sigma: ");
+        // for(int i=0;i<multi_size;i++){
+        //     printf("%d ",sigma[i]);
+        // }
+        // printf("\n");
+
+        // printf("dist: ");
+        // for(int i=0;i<multi_size;i++){
+        //     printf("%.0f ",dist[i]);
+        // }
+        // printf("\n");
+
+        // printf("max_multi: ");
+        // for(int i=0;i<max_multi;i++){
+        //     printf("%d ",map_S[i]);
+        // }
+        // printf("\n");
+
+        // printf("f1: ");
+        // for(int i=0;i<multi_size;i++){
+        //     printf("[%d, %d]> ",f1[i].nodeID,f1[i].traverse_S);
+        // }
+        // printf("\n");
+        #pragma  endregion
+
+        int f1_indicator = 0;
+        int f2_indicator = 0;
+        int s_indicator = 0;
+       
+
+        int level=0;
+        while (level<1) { //currentQueueSize > 0
+            std::cout<<"currentQueueSize: "<<currentQueueSize<<std::endl;
+            Q_struct* g_currentQueue;
+            Q_struct* g_nextQueue;
+            if(level% 2 == 0){
+                g_currentQueue = g_f1;
+                g_nextQueue = g_f2;
+            }
+            else{
+                g_currentQueue = g_f2;
+                g_nextQueue = g_f1;
+            }
+            
+            stackOffset[level+1] = currentQueueSize + stackOffset[level];
+            int blocknum = (currentQueueSize < INT_MAX) ? currentQueueSize : INT_MAX;
+            //平行跑BFS
+            // printf("currentQueueSize: %d\n",currentQueueSize);
+            for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++)
+                    allBC_MS<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist,g_sigma,INT_MAX,i,currentQueueSize,mappingCount);
+
+            CHECK(cudaDeviceSynchronize());
+
+
+            // Process currentQueue
+            // for (auto i = 0; i < f1_indicator; i++) {
+            //     int v = currentQueue[i].nodeID;
+            //     uint64_t traverse_S = currentQueue[i].traverse_S;
+
+            //     for (auto neighborIndex = csr.csrV[v]; neighborIndex < csr.csrV[v + 1]; neighborIndex++) {
+            //         int neighborNodeID = csr.csrE[neighborIndex];
+
+            //         for (auto multi_node = 0; multi_node < mappingCount; multi_node++) {
+            //             if (traverse_S & (1ULL << multi_node)) {
+            //                 int position_v = mappingCount * v + multi_node;
+            //                 int position_n = mappingCount * neighborNodeID + multi_node;
+
+            //                 if (dist_MULTI[position_n] == dist_MULTI[position_v] + 1) {
+            //                     sigma_MULTI[position_n] += sigma_MULTI[position_v];
+            //                 } else if (dist_MULTI[position_n] > dist_MULTI[position_v] + 1) {
+            //                     dist_MULTI[position_n] = dist_MULTI[position_v] + 1;
+            //                     sigma_MULTI[position_n] = sigma_MULTI[position_v];
+
+            //                     // Check if neighborNodeID is already in nextQueue
+            //                     int found = -1;
+            //                     for (auto find = 0; find < f2_indicator; find++) {
+            //                         if (nextQueue[find].nodeID == neighborNodeID) {
+            //                             found = find;
+            //                             break;
+            //                         }
+            //                     }
+            //                     if (found >= 0) {
+            //                         nextQueue[found].traverse_S |= (1ULL << multi_node);
+            //                     } else {
+            //                         nextQueue[f2_indicator].nodeID = neighborNodeID;
+            //                         nextQueue[f2_indicator].traverse_S = (1ULL << multi_node);
+            //                         f2_indicator++;
+            //                     }
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
+
+            // Swap currentQueue and nextQueue
+            cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost);
+            cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToDevice);
+            cudaMemset(g_nextQueueSize,0,sizeof(int));
+            // std::cout<<"nextQueueSize: "<<currentQueueSize<<std::endl;
+            level++;
+            
+            cudaMemcpy(&queue[0],g_nextQueue, currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToHost);
+            printf("f1: ");
+            for(int i=0;i<currentQueueSize;i++){
+                printf("[%d, %lld]> ",queue[i].nodeID,queue[i].traverse_S);
+            }
+            printf("\n");
+
+
+            f1_indicator = f2_indicator;
+            f2_indicator = 0;
+            // Reset nextQueue traverse_S for next iteration
+            // for (int i = 0; i < f1_indicator; i++) {
+            //     nextQueue[i].traverse_S = 0;
+            // }
+        }
+
+        #pragma  region print
+        //檢查GPU資料
+        cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyHostToHost);
+        cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyHostToHost);
+        // cudaMemcpy(f1, g_f1,   mappingCount * sizeof(Q_struct),cudaMemcpyHostToHost);
+
+        printf("sigma: ");
+        for(int i=0;i<V;i++){
+            printf("[");
+            for(int j=0;j<mappingCount;j++){
+                printf("%d,",sigma[mappingCount*i+j]);
+            }
+            printf("] ");
+        }
+        printf("\n");
+
+        printf("dist: ");
+        for(int i=0;i<V;i++){
+            printf("[");
+            for(int j=0;j<mappingCount;j++){
+                printf("%.0f,",dist[mappingCount*i+j]);
+            }
+            printf("] ");
+        }
+        printf("\n");
+
+
+        // printf("f1: ");
+        // for(int i=0;i<multi_size;i++){
+        //     printf("[%d, %d]> ",f1[i].nodeID,f1[i].traverse_S);
+        // }
+        // printf("\n");
+        #pragma  endregion
+
+
+
+        // // multi_time2 = seconds();
+        // // multi_forward_Time += (multi_time2 - multi_time1);
+        // // multi_time1 = seconds();
+
+        // // Back-propagation
+        // for (int layer = s_indicator - 1; layer >= 0; layer--) {
+        //     for (int i = 0; i < s_size[layer]; i++) {
+        //         int v = s[layer][i].nodeID;
+        //         uint64_t traverse_S = s[layer][i].traverse_S;
+
+        //         for (int multi_node = 0; multi_node < mappingCount; multi_node++) {
+        //             if (traverse_S & (1ULL << multi_node)) {
+        //                 int position_v = mappingCount * v + multi_node;
+
+        //                 float coeff = 0.0;
+
+        //                 // For each neighbor w of v
+        //                 for (int neighborIndex = csr.csrV[v]; neighborIndex < csr.csrV[v + 1]; neighborIndex++) {
+        //                     int w = csr.csrE[neighborIndex];
+        //                     int position_w = mappingCount * w + multi_node;
+
+        //                     if (dist_MULTI[position_w] == dist_MULTI[position_v] + 1) {
+        //                         coeff += (sigma_MULTI[position_v] / sigma_MULTI[position_w]) * (1.0 + delta_MULTI[position_w]);
+        //                     }
+        //                 }
+
+        //                 delta_MULTI[position_v] += coeff;
+
+        //                 // If v is not the source node, accumulate delta into BC[v]
+        //                 if (v != map_S[multi_node]) {
+        //                     BC[v] += delta_MULTI[position_v];
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     // Free s[layer]
+        //     free(s[layer]);
+        // }
+
+        // multi_time2 = seconds();
+        // multi_backward_Time += (multi_time2 - multi_time1);
+    }
+
+    // multi_time_end = seconds();
+    // multi_total_time = (multi_time_end - multi_time_start);
+
+   
 }
