@@ -971,7 +971,7 @@ __global__ void sum_BC_Result_MS(float* result,float* delta,int size,int* map_S,
 
 }
 
-__global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* currentQueue,Q_struct* nextQueue,float* dist,int* sigma,int blocknum,int j,int size, int mappingcount){
+__global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* currentQueue,Q_struct* nextQueue,float* dist,int* sigma,int blocknum,int j,int size, int mappingcount,int V){
 
     register const int bid = blockIdx.x + j * blocknum; // 0 + 0 * INT_MAX
 
@@ -982,6 +982,7 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
     register const int degree = g_csrV[node+1] - g_csrV[node];
     register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0)); //需要看的鄰居，疊代次數
     register float     old;
+
     // printf("bid: %d,node: %d ,degree: %d, threadOffset: %d\n",bid,node,degree,threadOffset);
     for(int i=0;i<threadOffset;i++){
         register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x; //該點node的鄰居位置
@@ -1039,11 +1040,36 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
                     if (dist[position_n] == dist[position_v] + 1) {
                         atomicAdd(&sigma[position_n], sigma[position_v]);
                     }
-
                 }
             }    
         }
-    } 
+    }
+
+    if((bid||threadIdx.x)==0 && *nextQueueSize!=0){
+        printf("bid: %d, threadIdx.x: %d\n",bid,threadIdx.x);
+        Q_struct nextQueue_temp[sizeof(nextQueue)];
+        register int nextQueue_temp_size=1;
+        nextQueue_temp[0]=nextQueue[0];
+        printf("0[ %d,%ld ]\n",nextQueue_temp[0].nodeID,nextQueue_temp[0].traverse_S);
+        for (int i = 1; i < *nextQueueSize; i++){
+            for (int j = 0; j < nextQueue_temp_size; j++){
+                if(nextQueue[i].nodeID==nextQueue_temp[j].nodeID){
+                    nextQueue_temp[j].traverse_S|=nextQueue[i].traverse_S;
+                    goto next_element;
+                }
+            }
+            nextQueue_temp[nextQueue_temp_size]=nextQueue[i];
+            nextQueue_temp_size++;
+            next_element:;
+        }
+
+        for (int j = 0; j < nextQueue_temp_size; j++){
+            printf("[ %d,%ld ]\n",nextQueue_temp[j].nodeID,nextQueue_temp[j].traverse_S);
+            nextQueue[j]=nextQueue_temp[j];
+        }
+        *nextQueueSize=nextQueue_temp_size;
+    }
+
 }
 
 
@@ -1109,7 +1135,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
 
     //origin
 
-    for (int sourceID = csr.startNodeID; sourceID <= csr.startNodeID+3; ++sourceID) {
+    for (int sourceID = csr.startNodeID; sourceID <= csr.endNodeID; ++sourceID) {
         if (nodeDone[sourceID]) continue;
 
         // multi_time1 = seconds();
@@ -1199,7 +1225,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
             //平行跑BFS
             // printf("currentQueueSize: %d\n",currentQueueSize);
             for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++)
-                    allBC_MS<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist,g_sigma,INT_MAX,i,currentQueueSize,mappingCount);
+                    allBC_MS<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist,g_sigma,INT_MAX,i,currentQueueSize,mappingCount,V);
 
             // std::cout<<"done: "<<level<<std::endl;
             CHECK(cudaDeviceSynchronize());
