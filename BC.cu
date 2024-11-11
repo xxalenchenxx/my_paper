@@ -633,10 +633,15 @@ __global__ void printArray_int(int* array, int size) {
         printf("g_dist[%d] = %d\n", idx, array[idx]);
     }
 }
-__global__ void printArray_float(float* array, int size) {
+__global__ void printArray_float(float* array, int size,int mappingcount) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
-        printf("g_delta[%d] = %f\n", idx, array[idx]);
+        printf("[ ");
+        for(int i=0;i<mappingcount;i++){
+            printf("%f,", array[idx+i]);
+        }
+        printf("]>");
+        
     }
 }
 __global__ void printstack_int(int* array, int size) {
@@ -864,7 +869,7 @@ void brandes_SS_par(const CSR& csr, int V, float *BC) {
     cudaFree(g_BC);
 }
 
-__global__ void resetBC_value_MS(float* dist,Q_struct* f1,int* sigma,float* delta,Q_struct* stack,int target,int size){
+__global__ void resetBC_value_MS(float* dist,Q_struct* f1,Q_struct* f2,int* sigma,float* delta,Q_struct* stack,int target,int size){
 
     register const int idx = threadIdx.x + blockIdx.x * blockDim.x;
     
@@ -874,6 +879,8 @@ __global__ void resetBC_value_MS(float* dist,Q_struct* f1,int* sigma,float* delt
         delta[idx] = 0.0f;
         f1[idx].nodeID = -1;
         f1[idx].traverse_S=0;
+        f2[idx].nodeID = -1;
+        f2[idx].traverse_S=0;
     }
     // f1[0].nodeID = target;
     // stack[0].nodeID = target;
@@ -890,7 +897,7 @@ __global__ void INITIAL_value_MS(float* dist,Q_struct* f1,int* sigma,int* g_map_
     if(idx < size){
         register const int sourceID = g_map_S[idx];
         register const int position = size * sourceID + idx; //size:mapping count
-        printf("position: %d idx: %d\n",position,idx);
+        // printf("position: %d idx: %d\n",position,idx);
         sigma[position]=1;
         dist[position]=0.0f;
         f1[idx].nodeID = sourceID;
@@ -904,11 +911,65 @@ __global__ void INITIAL_value_MS(float* dist,Q_struct* f1,int* sigma,int* g_map_
     // }
 }
 
-__device__ inline uint64_t atomicOrULL(uint64_t* address, uint64_t val) {
-    unsigned long long int* address_as_ull = (unsigned long long int*)address;
-    return atomicOr(address_as_ull, (unsigned long long int)val);
+__global__ void deltaCalculation_MS(int* g_csrV,int* g_csrE,float* g_delta,int* sigma,Q_struct* stack,float* dist,int blocknum,int j,int startposition,int size,int mappingcount){
+
+    register const int bid = blockIdx.x + j*blocknum;
+    register const int node = stack[startposition + bid].nodeID;
+    register const uint64_t traverse_S = stack[startposition + bid].traverse_S;
+    // printf("traverse node: %d\n",node);
+    if(bid >= size || node == -1) return;
+
+    register const int degree = g_csrV[node+1] - g_csrV[node];
+    register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0));
+
+    for(int i=0;i<threadOffset;i++) {
+        register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x;
+        if(position < g_csrV[node+1]){ //&& dist[node] - 1 == dist[g_csrE[position]]
+            // printf("traverse node: %d\n",node);
+            register const int neighborNodeID = g_csrE[position];
+            for (int multi_node = 0; multi_node < mappingcount; multi_node++) {
+                // printf("multi_node: %d \n",multi_node);
+                if (traverse_S & (1ULL << multi_node)) {
+                    register const int position_v = mappingcount * node           + multi_node;
+                    register const int position_n = mappingcount * neighborNodeID + multi_node;
+                    if(dist[position_v] - 1 == dist[position_n]){
+                        atomicAdd(&g_delta[position_n],((float)sigma[position_n]/sigma[position_v])*(1.0+g_delta[position_v]));
+                    }
+                }
+            }  
+            //printf("%d(%d,%.2f) %d(%d,%.2f)\n",node,level[node],sigma[node],adjacencyList[position],level[adjacencyList[position]],sigma[adjacencyList[position]]);
+            // printf("g_delta[%d]: %f\n",g_csrE[position],g_delta[g_csrE[position]]);
+
+        }
+    }
+
 }
 
+
+__global__ void sum_BC_Result_MS(float* result,float* delta,int size,int* map_S,int mappingCount){
+    extern __shared__ int shared_map_S[];
+    register const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+     // Load map_S into shared memory
+    if (threadIdx.x < mappingCount) {
+        shared_map_S[threadIdx.x] = map_S[threadIdx.x];
+    }
+    __syncthreads();
+
+    if(idx < size){
+        // #pragma unroll
+        for(int i=0;i<mappingCount;i++){
+            if(shared_map_S[i]==idx){
+                continue;
+            }
+            // atomicAdd(& result[idx], delta[idx*mappingCount+i]);
+            result[idx] += delta[idx*mappingCount+i];
+        }
+        printf("BC[%d]: %f\n",idx,result[idx]);
+    }
+        
+
+}
 
 __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* currentQueue,Q_struct* nextQueue,float* dist,int* sigma,int blocknum,int j,int size, int mappingcount){
 
@@ -917,16 +978,16 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
     if(bid > size || currentQueue[bid].nodeID == -1) return; //大於currentQueueSize
     
     register const int node = currentQueue[bid].nodeID;
+    register const uint64_t traverse_S = currentQueue[bid].traverse_S; //我改這裡
     register const int degree = g_csrV[node+1] - g_csrV[node];
     register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0)); //需要看的鄰居，疊代次數
     register float     old;
-    // printf("bid: %d,node: %d ,degree: %d, blockDim.x: %d\n",bid,node,degree,blockDim.x);
+    // printf("bid: %d,node: %d ,degree: %d, threadOffset: %d\n",bid,node,degree,threadOffset);
     for(int i=0;i<threadOffset;i++){
         register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x; //該點node的鄰居位置
-        uint64_t traverse_S = currentQueue[bid].traverse_S; //我改這裡
         if(position < g_csrV[node+1] ){
             register const int neighborNodeID = g_csrE[position];
-            
+            // printf("node: %d ,neighbor: %d threadOffset: %d\n",node,neighborNodeID,threadOffset);
             
             for (int multi_node = 0; multi_node < mappingcount; multi_node++) {
                 // printf("multi_node: %d \n",multi_node);
@@ -935,87 +996,54 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
                     register const int position_n = mappingcount * neighborNodeID + multi_node;
                     // printf("node: %d ,neighbor: %d,pos_v: %d,pos_n: %d ,multi_node:%d\n",node,neighborNodeID,position_v,position_n,multi_node);
                     // 更新 dist_MULTI 和 sigma_MULTI
-                    if (dist[position_n] == dist[position_v] + 1) {
-                        atomicAdd(&sigma[position_n], sigma[position_v]);
-                    }
                     
+                    // printf("ok1\n");
                     if (dist[position_n] > dist[position_v] + 1) {
                         old = atomicMinFloat(&dist[position_n], (dist[position_v] + 1.0));
                         
                         if(old != dist[position_n]){
-                            sigma[position_n] = sigma[position_v];
+                            sigma[position_n] = 0;
                             // 检查 neighborNodeID 是否已在 nextQueue 中
-                            // printf("node: %d ,neighbor: %d, n_dist: %.0f\n",node,neighborNodeID,dist[position_n]);
-                            bool found = false;
-
-                            // printf("Queue_size: %d\n",*nextQueueSize);
-                            for (int find = 0; find < *nextQueueSize; find++) {
-                                // printf("enxtQueue[find].nodeID: %d\t neighborNodeID: %d\n",nextQueue[find].nodeID,neighborNodeID);
-                                if (nextQueue[find].nodeID == neighborNodeID) {
-                                    // atomicOr64(&nextQueue[find].traverse_S, (1ULL << multi_node));
-                                    atomicOrULL(&nextQueue[find].traverse_S, (1ULL << multi_node));
-                                    // nextQueue[find].traverse_S|=(1ULL << multi_node);
-                                    found = true;
-                                    break;
-                                }
-                            }
-
-                            // 若 neighborNodeID 不在 nextQueue 中，则插入
-                            if (!found) {
-                                int next = atomicAdd(nextQueueSize,1);
-                                printf("nextQueueSize: %d\n",*nextQueueSize);
-                                nextQueue[next].nodeID = __ldg(&g_csrE[position]);
-                                nextQueue[next].traverse_S |= (1ULL << multi_node);
-                            }
-                        
+                            // printf("node: %d ,neighbor: %d\n",node,neighborNodeID);
+                            // printf("node: %d ,neighbor: %d\n",node,neighborNodeID);
+                            int next = atomicAdd(nextQueueSize,1);
+                            nextQueue[next].nodeID = __ldg(&g_csrE[position]);
+                            nextQueue[next].traverse_S = (1ULL << multi_node);
+                            // bool found = false;
+                            // for (int find = 0; find < next ; find++) {
+                            //     // printf("enxtQueue[find].nodeID: %d\t neighborNodeID: %d\n",nextQueue[find].nodeID,neighborNodeID);
+                            //     if (nextQueue[find].nodeID == neighborNodeID) {
+                                    
+                                    
+                            //         // printf("node: %d ,neighbor: %d, nextQueueSize: %d\n",node,neighborNodeID,next);
+                            //         nextQueue[find].traverse_S|=(1ULL << multi_node);
+                            //         found = true;
+                            //         atomicAdd(nextQueueSize,-1);
+                            //         // break;
+                            //     }
+                            // }
+                            
+                            // if(found ==false){
+                            //     nextQueue[next].nodeID = __ldg(&g_csrE[position]);
+                            //     // printf("node: %d ,neighbor: %d, traverse_S: %d\n",node,neighborNodeID,(1ULL << multi_node));
+                            //     // nextQueue[next].nodeID = neighborNodeID;
+                            //     nextQueue[next].traverse_S = (1ULL << multi_node);
+                            // }
+                           
                         }
-
+                        
                         // dist[position_n] = dist[position_v] + 1;
                         // sigma[position_n] = sigma[position_v];
                     }
 
+                    if (dist[position_n] == dist[position_v] + 1) {
+                        atomicAdd(&sigma[position_n], sigma[position_v]);
+                    }
 
                 }
             }    
         }
-    }
-
-
-    // Process currentQueue
-    // for (auto i = 0; i < f1_indicator; i++) {
-    //     int v = currentQueue[i].nodeID;
-    //     uint64_t traverse_S = currentQueue[i].traverse_S
-    //     for (auto neighborIndex = csr.csrV[v]; neighborIndex < csr.csrV[v + 1]; neighborIndex++) {
-    //         int neighborNodeID = csr.csrE[neighborIndex]
-    //         for (auto multi_node = 0; multi_node < mappingCount; multi_node++) {
-    //             if (traverse_S & (1ULL << multi_node)) {
-    //                 int position_v = mappingCount * v + multi_node;
-    //                 int position_n = mappingCount * neighborNodeID + multi_node
-    //                 if (dist_MULTI[position_n] == dist_MULTI[position_v] + 1) {
-    //                     sigma_MULTI[position_n] += sigma_MULTI[position_v];
-    //                 } else if (dist_MULTI[position_n] > dist_MULTI[position_v] + 1) {
-    //                     dist_MULTI[position_n] = dist_MULTI[position_v] + 1;
-    //                     sigma_MULTI[position_n] = sigma_MULTI[position_v]
-    //                     // Check if neighborNodeID is already in nextQueue
-    //                     int found = -1;
-    //                     for (auto find = 0; find < f2_indicator; find++) {
-    //                         if (nextQueue[find].nodeID == neighborNodeID) {
-    //                             found = find;
-    //                             break;
-    //                         }
-    //                     }
-    //                     if (found >= 0) {
-    //                         nextQueue[found].traverse_S |= (1ULL << multi_node);
-    //                     } else {
-    //                         nextQueue[f2_indicator].nodeID = neighborNodeID;
-    //                         nextQueue[f2_indicator].traverse_S = (1ULL << multi_node);
-    //                         f2_indicator++;
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
+    } 
 }
 
 
@@ -1036,6 +1064,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
     float* dist     = (float*)malloc(sizeof(float) * multi_size);
     Q_struct*  f1   = (Q_struct*)malloc(sizeof(Q_struct) * V);
     Q_struct*  queue   = (Q_struct*)malloc(sizeof(Q_struct) * V);
+    float*  delta   = (float*)malloc(sizeof(float) * multi_size);
     //GPU MALLOC　variable
     Q_struct*   g_stack;       
     int*   g_sigma;     
@@ -1052,7 +1081,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
     float* g_BC;
 
     // printf("start malloc\n");
-    cudaMalloc((void **)&g_stack,V * sizeof(Q_struct)); //用CPU的stack offset存每一層的位置
+    cudaMalloc((void **)&g_stack,multi_size * sizeof(Q_struct)); //用CPU的stack offset存每一層的位置 因為node可能在不同層重複出現，所以要開multi_size的大小
     cudaMalloc((void **)&g_sigma,multi_size * sizeof(int));
     cudaMalloc((void **)&g_dist,multi_size * sizeof(float));
     cudaMalloc((void **)&g_level,V * sizeof(int));
@@ -1080,7 +1109,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
 
     //origin
 
-    for (int sourceID = csr.startNodeID; sourceID <= csr.startNodeID; ++sourceID) {
+    for (int sourceID = csr.startNodeID; sourceID <= csr.startNodeID+3; ++sourceID) {
         if (nodeDone[sourceID]) continue;
 
         // multi_time1 = seconds();
@@ -1101,7 +1130,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
         // Initialize dist_MULTI, sigma_MULTI, delta_MULTI
         //初始g_f1 queue
         cudaMemcpy(g_map_S,map_S, mappingCount * sizeof(int),cudaMemcpyHostToDevice);
-        resetBC_value_MS<<<ceil(multi_size/64.0),min(multi_size,64)>>>(g_dist,g_f1,g_sigma,g_delta,g_stack,sourceID,multi_size);
+        resetBC_value_MS<<<ceil(multi_size/64.0),min(multi_size,64)>>>(g_dist,g_f1,g_f2,g_sigma,g_delta,g_stack,sourceID,multi_size);
         cudaMemset(g_nextQueueSize,0,sizeof(int));
         currentQueueSize = mappingCount;
         memset(stackOffset, 0, sizeof(int) * multi_size);
@@ -1109,27 +1138,35 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
 
         #pragma  region print
         //檢查GPU資料
-        // cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyHostToHost);
-        // cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyHostToHost);
+        cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyHostToHost);
+        cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyHostToHost);
         // cudaMemcpy(f1, g_f1,   mappingCount * sizeof(Q_struct),cudaMemcpyDeviceToHost);
 
         // printf("sigma: ");
-        // for(int i=0;i<multi_size;i++){
-        //     printf("%d ",sigma[i]);
+        // for(int i=0;i<V;i++){
+        //     printf("[");
+        //     for(int j=0;j<mappingCount;j++){
+        //         printf("%d,",sigma[mappingCount*i+j]);
+        //     }
+        //     printf("] ");
         // }
         // printf("\n");
 
         // printf("dist: ");
-        // for(int i=0;i<multi_size;i++){
-        //     printf("%.0f ",dist[i]);
+        // for(int i=0;i<V;i++){
+        //     printf("[");
+        //     for(int j=0;j<mappingCount;j++){
+        //         printf("%.0f,",dist[mappingCount*i+j]);
+        //     }
+        //     printf("] ");
         // }
         // printf("\n");
 
-        // printf("max_multi: ");
-        // for(int i=0;i<max_multi;i++){
-        //     printf("%d ",map_S[i]);
-        // }
-        // printf("\n");
+        printf("--------------------multi Source--------------------");
+        for(int i=0;i<max_multi;i++){
+            printf("%d ",map_S[i]);
+        }
+        printf("\n");
 
         // printf("f1: ");
         // for(int i=0;i<multi_size;i++){
@@ -1138,14 +1175,14 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
         // printf("\n");
         #pragma  endregion
 
-        int f1_indicator = 0;
-        int f2_indicator = 0;
-        int s_indicator = 0;
+        // int f1_indicator = 0;
+        // int f2_indicator = 0;
+        // int s_indicator = 0;
        
 
         int level=0;
-        while (level<1) { //currentQueueSize > 0
-            std::cout<<"currentQueueSize: "<<currentQueueSize<<std::endl;
+        while (currentQueueSize > 0) { //currentQueueSize > 0
+            // std::cout<<"currentQueueSize: "<<currentQueueSize<<std::endl;
             Q_struct* g_currentQueue;
             Q_struct* g_nextQueue;
             if(level% 2 == 0){
@@ -1164,77 +1201,30 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
             for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++)
                     allBC_MS<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist,g_sigma,INT_MAX,i,currentQueueSize,mappingCount);
 
+            // std::cout<<"done: "<<level<<std::endl;
             CHECK(cudaDeviceSynchronize());
 
-
-            // Process currentQueue
-            // for (auto i = 0; i < f1_indicator; i++) {
-            //     int v = currentQueue[i].nodeID;
-            //     uint64_t traverse_S = currentQueue[i].traverse_S;
-
-            //     for (auto neighborIndex = csr.csrV[v]; neighborIndex < csr.csrV[v + 1]; neighborIndex++) {
-            //         int neighborNodeID = csr.csrE[neighborIndex];
-
-            //         for (auto multi_node = 0; multi_node < mappingCount; multi_node++) {
-            //             if (traverse_S & (1ULL << multi_node)) {
-            //                 int position_v = mappingCount * v + multi_node;
-            //                 int position_n = mappingCount * neighborNodeID + multi_node;
-
-            //                 if (dist_MULTI[position_n] == dist_MULTI[position_v] + 1) {
-            //                     sigma_MULTI[position_n] += sigma_MULTI[position_v];
-            //                 } else if (dist_MULTI[position_n] > dist_MULTI[position_v] + 1) {
-            //                     dist_MULTI[position_n] = dist_MULTI[position_v] + 1;
-            //                     sigma_MULTI[position_n] = sigma_MULTI[position_v];
-
-            //                     // Check if neighborNodeID is already in nextQueue
-            //                     int found = -1;
-            //                     for (auto find = 0; find < f2_indicator; find++) {
-            //                         if (nextQueue[find].nodeID == neighborNodeID) {
-            //                             found = find;
-            //                             break;
-            //                         }
-            //                     }
-            //                     if (found >= 0) {
-            //                         nextQueue[found].traverse_S |= (1ULL << multi_node);
-            //                     } else {
-            //                         nextQueue[f2_indicator].nodeID = neighborNodeID;
-            //                         nextQueue[f2_indicator].traverse_S = (1ULL << multi_node);
-            //                         f2_indicator++;
-            //                     }
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }
-
             // Swap currentQueue and nextQueue
-            cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost);
-            cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToDevice);
-            cudaMemset(g_nextQueueSize,0,sizeof(int));
+            CHECK(cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost));
+            std::cout<<"nextQueueSize: "<<currentQueueSize<<std::endl;
+            CHECK(cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToDevice));
+            CHECK(cudaMemset(g_nextQueueSize,0,sizeof(int)));
             // std::cout<<"nextQueueSize: "<<currentQueueSize<<std::endl;
             level++;
             
-            cudaMemcpy(&queue[0],g_nextQueue, currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToHost);
+            CHECK(cudaMemcpy(&queue[0],g_nextQueue, currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToHost));
             printf("f1: ");
             for(int i=0;i<currentQueueSize;i++){
                 printf("[%d, %lld]> ",queue[i].nodeID,queue[i].traverse_S);
             }
             printf("\n");
-
-
-            f1_indicator = f2_indicator;
-            f2_indicator = 0;
-            // Reset nextQueue traverse_S for next iteration
-            // for (int i = 0; i < f1_indicator; i++) {
-            //     nextQueue[i].traverse_S = 0;
-            // }
         }
 
         #pragma  region print
         //檢查GPU資料
-        cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyHostToHost);
-        cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyHostToHost);
-        // cudaMemcpy(f1, g_f1,   mappingCount * sizeof(Q_struct),cudaMemcpyHostToHost);
+        cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyDeviceToHost);
+        cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyDeviceToHost);
+        // cudaMemcpy(f1, g_f1,   mappingCount * sizeof(Q_struct),cudaMemcpyDeviceToHost);
 
         printf("sigma: ");
         for(int i=0;i<V;i++){
@@ -1266,44 +1256,38 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
 
 
 
-        // // multi_time2 = seconds();
-        // // multi_forward_Time += (multi_time2 - multi_time1);
-        // // multi_time1 = seconds();
+        // multi_time2 = seconds();
+        // multi_forward_Time += (multi_time2 - multi_time1);
+        // multi_time1 = seconds();
 
-        // // Back-propagation
-        // for (int layer = s_indicator - 1; layer >= 0; layer--) {
-        //     for (int i = 0; i < s_size[layer]; i++) {
-        //         int v = s[layer][i].nodeID;
-        //         uint64_t traverse_S = s[layer][i].traverse_S;
+        // Back-propagation
+         std::cout << "--------------backward--------------"<< std::endl;
+        for (int d = level - 1; d > 0; --d) {
+            int degree =(stackOffset[d+1] - stackOffset[d]);
+            int blocknum = (degree < INT_MAX) ? degree : INT_MAX;
+            std::cout << "backward level(" << d << "):\t" << stackOffset[d+1] - stackOffset[d] << std::endl;
+            for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++)
+                deltaCalculation_MS<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_delta,g_sigma,g_stack,g_dist,INT_MAX,i,stackOffset[d],degree,mappingCount);
+            
+            CHECK(cudaDeviceSynchronize());
 
-        //         for (int multi_node = 0; multi_node < mappingCount; multi_node++) {
-        //             if (traverse_S & (1ULL << multi_node)) {
-        //                 int position_v = mappingCount * v + multi_node;
+            #pragma  region print
+            // CHECK(cudaMemcpy(&delta[0], g_delta,   multi_size * sizeof(float),cudaMemcpyDeviceToHost));
+            // printf("delta: ");
+            // for(int i=0;i<V;i++){
+            //     printf("[");
+            //     for(int j=0;j<mappingCount;j++){
+            //         printf("%.3f,",delta[mappingCount*i+j]);
+            //     }
+            //     printf("] ");
+            // }
+            // printf("\n");
+            #pragma  endregion
+        }
+        sum_BC_Result_MS<<<ceil(V/64.0),min(V,64)>>>(g_BC,g_delta,V,g_map_S,mappingCount);
+        CHECK(cudaDeviceSynchronize());
 
-        //                 float coeff = 0.0;
-
-        //                 // For each neighbor w of v
-        //                 for (int neighborIndex = csr.csrV[v]; neighborIndex < csr.csrV[v + 1]; neighborIndex++) {
-        //                     int w = csr.csrE[neighborIndex];
-        //                     int position_w = mappingCount * w + multi_node;
-
-        //                     if (dist_MULTI[position_w] == dist_MULTI[position_v] + 1) {
-        //                         coeff += (sigma_MULTI[position_v] / sigma_MULTI[position_w]) * (1.0 + delta_MULTI[position_w]);
-        //                     }
-        //                 }
-
-        //                 delta_MULTI[position_v] += coeff;
-
-        //                 // If v is not the source node, accumulate delta into BC[v]
-        //                 if (v != map_S[multi_node]) {
-        //                     BC[v] += delta_MULTI[position_v];
-        //                 }
-        //             }
-        //         }
-        //     }
-        //     // Free s[layer]
-        //     free(s[layer]);
-        // }
+        
 
         // multi_time2 = seconds();
         // multi_backward_Time += (multi_time2 - multi_time1);
