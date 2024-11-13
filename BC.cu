@@ -17,8 +17,8 @@ using namespace std;
 
 // Updated Q_struct definition
 typedef struct q_struct {
-    int nodeID;
     uint64_t traverse_S;
+    int nodeID;
 } Q_struct;
 
 #define CHECK(call) \
@@ -86,8 +86,10 @@ int main(int argc, char* argv[]){
 
     vector<float> ans(csr->csrVSize,0.0);
     float *ans_para= (float*)calloc(csr->csrVSize, sizeof(float));
+    float *ans_para2= (float*)calloc(csr->csrVSize, sizeof(float));
     vector<float> my_BC(csr->csrVSize,0.0);
     vector<float> ans_para_vec(csr->csrVSize,0.0);
+    vector<float> ans_para_vec2(csr->csrVSize,0.0);
     //brandes start
     printf("csrVSize: %d\n",csr->csrVSize);
     printf("startNodeID: %d\n",csr->startNodeID);
@@ -95,17 +97,20 @@ int main(int argc, char* argv[]){
     printf("startAtZero: %d\n",csr->startAtZero);
     
     time1 = seconds();
-    brandes_ORIGIN(*csr,csr->csrVSize,ans);
+    // brandes_ORIGIN(*csr,csr->csrVSize,ans);
+    brandes_SS_par(*csr,csr->csrVSize,ans_para);
     time2 = seconds();
-    printf("done brandes_ORIGIN\n");
+    printf("done brandes_SS_par\n");
+
+
     multi_time1 = seconds();
-    int max_multi=2;
+    int max_multi=4;
     // Seq_multi_source_brandes( *csr , max_multi , my_BC );
     // brandes_ORIGIN_OMP(*csr,csr->csrVSize,my_BC);
     // showCSR(csr);
     // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,my_BC);
     // brandes_SS_par(*csr,csr->csrVSize,ans_para);
-    brandes_MS_par(*csr , max_multi , ans_para);
+    brandes_MS_par(*csr , max_multi , ans_para2);
     multi_time2 = seconds();
     printf("done brandes_SS_par\n");
     // computeBC_shareBased(csr,my_BC);
@@ -113,8 +118,9 @@ int main(int argc, char* argv[]){
 
     for(int i=0;i<csr->csrVSize;i++){
         ans_para_vec[i]=ans_para[i];
+        ans_para_vec2[i]=ans_para2[i];
     }
-    // check_ans(ans,my_BC);
+    check_ans(ans_para_vec2,ans_para_vec);
     
     // for(auto i=0;i<csr->csrVSize/2;i++){
     //     printf("ans_para_vec[%d]: %f | %f\n",i,ans[i],ans_para_vec[i]);
@@ -137,8 +143,8 @@ int main(int argc, char* argv[]){
     // printf("[Execution Time] total_time    = %.6f, %.6f \n", multi_total_time, (multi_forward_Time + multi_backward_Time ) / multi_total_time);
     
     
-    printf("[Execution Time] total_time        = %.6f\n", time2-time1);
-    printf("[Execution Time] OMP_total_time    = %.6f\n", multi_time2-multi_time1);
+    printf("[Execution Time] total_time        = %.6f secs\n", time2-time1);
+    printf("[Execution Time] OMP_total_time    = %.6f secs\n", multi_time2-multi_time1);
     return 0;
 }
 
@@ -959,19 +965,19 @@ __global__ void sum_BC_Result_MS(float* result,float* delta,int size,int* map_S,
     if(idx < size){
         // #pragma unroll
         for(int i=0;i<mappingCount;i++){
-            if(shared_map_S[i]==idx){
+            if(shared_map_S[i]==idx)
                 continue;
-            }
-            // atomicAdd(& result[idx], delta[idx*mappingCount+i]);
+            
+            // atomicAdd(&result[idx], delta[idx*mappingCount+i]);
             result[idx] += delta[idx*mappingCount+i];
         }
-        printf("BC[%d]: %f\n",idx,result[idx]);
+        // printf("BC[%d]: %f\n",idx,result[idx]);
     }
         
 
 }
 
-__global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* currentQueue,Q_struct* nextQueue,float* dist,int* sigma,int blocknum,int j,int size, int mappingcount,int V){
+__global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* currentQueue,Q_struct* nextQueue,float* dist,int* sigma,int blocknum,int j,int size, int mappingcount){
 
     register const int bid = blockIdx.x + j * blocknum; // 0 + 0 * INT_MAX
 
@@ -982,7 +988,7 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
     register const int degree = g_csrV[node+1] - g_csrV[node];
     register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0)); //需要看的鄰居，疊代次數
     register float     old;
-
+    register int next;
     // printf("bid: %d,node: %d ,degree: %d, threadOffset: %d\n",bid,node,degree,threadOffset);
     for(int i=0;i<threadOffset;i++){
         register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x; //該點node的鄰居位置
@@ -1007,8 +1013,9 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
                             // 检查 neighborNodeID 是否已在 nextQueue 中
                             // printf("node: %d ,neighbor: %d\n",node,neighborNodeID);
                             // printf("node: %d ,neighbor: %d\n",node,neighborNodeID);
-                            int next = atomicAdd(nextQueueSize,1);
+                            next = atomicAdd(nextQueueSize,1);
                             nextQueue[next].nodeID = __ldg(&g_csrE[position]);
+                            // nextQueue[next].nodeID     = neighborNodeID;
                             nextQueue[next].traverse_S = (1ULL << multi_node);
                             // bool found = false;
                             // for (int find = 0; find < next ; find++) {
@@ -1040,38 +1047,86 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
                     if (dist[position_n] == dist[position_v] + 1) {
                         atomicAdd(&sigma[position_n], sigma[position_v]);
                     }
+
+                    // break;
                 }
             }    
         }
     }
 
-    if((bid||threadIdx.x)==0 && *nextQueueSize!=0){
-        printf("bid: %d, threadIdx.x: %d\n",bid,threadIdx.x);
-        Q_struct nextQueue_temp[sizeof(nextQueue)];
-        register int nextQueue_temp_size=1;
-        nextQueue_temp[0]=nextQueue[0];
-        printf("0[ %d,%ld ]\n",nextQueue_temp[0].nodeID,nextQueue_temp[0].traverse_S);
-        for (int i = 1; i < *nextQueueSize; i++){
-            for (int j = 0; j < nextQueue_temp_size; j++){
-                if(nextQueue[i].nodeID==nextQueue_temp[j].nodeID){
-                    nextQueue_temp[j].traverse_S|=nextQueue[i].traverse_S;
-                    goto next_element;
-                }
-            }
-            nextQueue_temp[nextQueue_temp_size]=nextQueue[i];
-            nextQueue_temp_size++;
-            next_element:;
-        }
+    // if((bid||threadIdx.x)==0 && *nextQueueSize){
+        
+    //     // for (int k = 0; k < *nextQueueSize; k++){
+    //     //     // printf("[ %d,%ld ]\n",nextQueue_temp[j].nodeID,nextQueue_temp[j].traverse_S);
+    //     //     printf("[%d,%lu]>",nextQueue[k].nodeID,nextQueue[k].traverse_S);
+    //     // }
+    //     // printf("\n");
 
-        for (int j = 0; j < nextQueue_temp_size; j++){
-            printf("[ %d,%ld ]\n",nextQueue_temp[j].nodeID,nextQueue_temp[j].traverse_S);
-            nextQueue[j]=nextQueue_temp[j];
-        }
-        *nextQueueSize=nextQueue_temp_size;
-    }
+    //     Q_struct nextQueue_temp[sizeof(nextQueue)];//V
+    //     register int nextQueue_temp_size=1;
+    //     // printf("sizeof(nextQueue):%lu\n",sizeof(nextQueue));
+    //     printf("*nextQueueSize1: %d\n",*nextQueueSize);
+    //     nextQueue_temp[0]=nextQueue[0];
+    //     for (int i = 1; i < *nextQueueSize; i++){
+    //         for (int j = 0; j < nextQueue_temp_size; j++){
+    //             if(nextQueue[i].nodeID==nextQueue_temp[j].nodeID){
+    //                 nextQueue_temp[j].traverse_S|=nextQueue[i].traverse_S;
+    //                 goto next_element;
+    //             }
+    //         }
+    //         // printf("nextQueue_temp_size:%d nextQueue_size:%d\n",nextQueue_temp_size,i);
+    //         nextQueue_temp[nextQueue_temp_size++]=nextQueue[i];
+    //         next_element:;
+    //     }
+
+    //     for (int j = 0; j < nextQueue_temp_size; j++){
+    //         // printf("[ %d,%ld ]\n",nextQueue_temp[j].nodeID,nextQueue_temp[j].traverse_S);
+    //         nextQueue[j]=nextQueue_temp[j];
+    //     }
+    //     *nextQueueSize=nextQueue_temp_size;
+    //     printf("*nextQueueSize2: %d\n",*nextQueueSize);
+    // }
 
 }
 
+
+__global__ void rearrange_queue_MS(Q_struct* nextQueue_temp,int* nextQueueSize, Q_struct* nextQueue) { 
+    register const int idx = threadIdx.x + blockIdx.x * blockDim.x;    
+
+    if(idx == 0 && *nextQueueSize > 0) {
+        register int nextQueue_temp_size = 1;
+
+        // 初始化第一個元素
+        nextQueue_temp[0] = nextQueue[0];
+
+        // 遍歷所有元素進行去重並合併 traverse_S
+        for (int i = 1; i < *nextQueueSize; i++) {
+            for (int j = 0; j < nextQueue_temp_size; j++) {
+                if (nextQueue[i].nodeID == nextQueue_temp[j].nodeID) {
+                    nextQueue_temp[j].traverse_S |= nextQueue[i].traverse_S;
+                    goto next_element;
+                }
+            }
+            
+            // 檢查是否超出預定大小
+            if (nextQueue_temp_size <= *nextQueueSize) {
+                nextQueue_temp[nextQueue_temp_size++] = nextQueue[i];
+            } else {
+                printf("Error: nextQueue_temp exceeds allocated size\n");
+                return;
+            }
+            next_element:;
+        }
+
+        // 將整理好的結果複製回 nextQueue
+        for (int j = 0; j < nextQueue_temp_size; j++) {
+            nextQueue[j] = nextQueue_temp[j];
+        }
+
+        // 更新 nextQueueSize
+        *nextQueueSize = nextQueue_temp_size;
+    }
+}
 
 
 void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
@@ -1100,6 +1155,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
     int*   g_S_size;
     Q_struct*   g_f1;
     Q_struct*   g_f2;
+    Q_struct*   nextQueue_temp;
     int*   g_nextQueueSize; //用來回傳給CPU判別currentQueueSize，是否繼續traverse
     int*   g_csrE;
     int*   g_csrV;
@@ -1108,6 +1164,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
 
     // printf("start malloc\n");
     cudaMalloc((void **)&g_stack,multi_size * sizeof(Q_struct)); //用CPU的stack offset存每一層的位置 因為node可能在不同層重複出現，所以要開multi_size的大小
+    cudaMalloc((void **)&nextQueue_temp,V * sizeof(Q_struct));
     cudaMalloc((void **)&g_sigma,multi_size * sizeof(int));
     cudaMalloc((void **)&g_dist,multi_size * sizeof(float));
     cudaMalloc((void **)&g_level,V * sizeof(int));
@@ -1156,16 +1213,16 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
         // Initialize dist_MULTI, sigma_MULTI, delta_MULTI
         //初始g_f1 queue
         cudaMemcpy(g_map_S,map_S, mappingCount * sizeof(int),cudaMemcpyHostToDevice);
-        resetBC_value_MS<<<ceil(multi_size/64.0),min(multi_size,64)>>>(g_dist,g_f1,g_f2,g_sigma,g_delta,g_stack,sourceID,multi_size);
+        resetBC_value_MS<<<ceil(multi_size/128.0),min(multi_size,128)>>>(g_dist,g_f1,g_f2,g_sigma,g_delta,g_stack,sourceID,multi_size);
         cudaMemset(g_nextQueueSize,0,sizeof(int));
         currentQueueSize = mappingCount;
         memset(stackOffset, 0, sizeof(int) * multi_size);
-        INITIAL_value_MS<<<ceil(mappingCount/64.0),min(mappingCount,64)>>>(g_dist,g_f1,g_sigma,g_map_S,mappingCount);
+        INITIAL_value_MS<<<ceil(mappingCount/128.0),min(mappingCount,128)>>>(g_dist,g_f1,g_sigma,g_map_S,mappingCount);
 
         #pragma  region print
         //檢查GPU資料
-        cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyHostToHost);
-        cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyHostToHost);
+        // cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyHostToHost);
+        // cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyHostToHost);
         // cudaMemcpy(f1, g_f1,   mappingCount * sizeof(Q_struct),cudaMemcpyDeviceToHost);
 
         // printf("sigma: ");
@@ -1188,11 +1245,11 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
         // }
         // printf("\n");
 
-        printf("--------------------multi Source--------------------");
-        for(int i=0;i<max_multi;i++){
-            printf("%d ",map_S[i]);
-        }
-        printf("\n");
+        // printf("--------------------multi Source--------------------");
+        // for(int i=0;i<max_multi;i++){
+        //     printf("%d ",map_S[i]);
+        // }
+        // printf("\n");
 
         // printf("f1: ");
         // for(int i=0;i<multi_size;i++){
@@ -1224,53 +1281,63 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
             int blocknum = (currentQueueSize < INT_MAX) ? currentQueueSize : INT_MAX;
             //平行跑BFS
             // printf("currentQueueSize: %d\n",currentQueueSize);
-            for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++)
-                    allBC_MS<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist,g_sigma,INT_MAX,i,currentQueueSize,mappingCount,V);
-
-            // std::cout<<"done: "<<level<<std::endl;
-            CHECK(cudaDeviceSynchronize());
+            for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++){
+                allBC_MS<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist,g_sigma,INT_MAX,i,currentQueueSize,mappingCount);
+                cudaDeviceSynchronize();
+                // CHECK(cudaMemcpy(&nextQueueSize_temp,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost));
+                // int shared_mem_size = (*g_nextQueueSize) * sizeof(Q_struct);
+                // rearrange_queue_MS<<<1,1>>>(nextQueue_temp,g_nextQueueSize,g_nextQueue);
+                // cudaDeviceSynchronize();
+            }
+                    
 
             // Swap currentQueue and nextQueue
-            CHECK(cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost));
-            std::cout<<"nextQueueSize: "<<currentQueueSize<<std::endl;
-            CHECK(cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToDevice));
-            CHECK(cudaMemset(g_nextQueueSize,0,sizeof(int)));
-            // std::cout<<"nextQueueSize: "<<currentQueueSize<<std::endl;
+            // CHECK(cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost));
+            // CHECK(cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToDevice));
+            // CHECK(cudaMemset(g_nextQueueSize,0,sizeof(int)));
+            cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost);
+            cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToDevice);
+            cudaMemset(g_nextQueueSize,0,sizeof(int));
             level++;
-            
-            CHECK(cudaMemcpy(&queue[0],g_nextQueue, currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToHost));
-            printf("f1: ");
-            for(int i=0;i<currentQueueSize;i++){
-                printf("[%d, %lld]> ",queue[i].nodeID,queue[i].traverse_S);
-            }
-            printf("\n");
+
+
+            #pragma  region print
+            // CHECK(cudaMemcpy(&queue[0],g_nextQueue, currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToHost));
+            // printf("f1: ");
+            // for(int i=0;i<currentQueueSize;i++){
+            //     printf("[%d, %lu]> ",queue[i].nodeID,queue[i].traverse_S);
+            // }
+            // printf("\n");
+            #pragma  endregion
+
+
         }
 
         #pragma  region print
         //檢查GPU資料
-        cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyDeviceToHost);
-        cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyDeviceToHost);
+        // cudaMemcpy(sigma,g_sigma, multi_size * sizeof(int),cudaMemcpyDeviceToHost);
+        // cudaMemcpy(dist, g_dist,   multi_size * sizeof(float),cudaMemcpyDeviceToHost);
         // cudaMemcpy(f1, g_f1,   mappingCount * sizeof(Q_struct),cudaMemcpyDeviceToHost);
 
-        printf("sigma: ");
-        for(int i=0;i<V;i++){
-            printf("[");
-            for(int j=0;j<mappingCount;j++){
-                printf("%d,",sigma[mappingCount*i+j]);
-            }
-            printf("] ");
-        }
-        printf("\n");
+        // printf("sigma: ");
+        // for(int i=0;i<V;i++){
+        //     printf("[");
+        //     for(int j=0;j<mappingCount;j++){
+        //         printf("%d,",sigma[mappingCount*i+j]);
+        //     }
+        //     printf("] ");
+        // }
+        // printf("\n");
 
-        printf("dist: ");
-        for(int i=0;i<V;i++){
-            printf("[");
-            for(int j=0;j<mappingCount;j++){
-                printf("%.0f,",dist[mappingCount*i+j]);
-            }
-            printf("] ");
-        }
-        printf("\n");
+        // printf("dist: ");
+        // for(int i=0;i<V;i++){
+        //     printf("[");
+        //     for(int j=0;j<mappingCount;j++){
+        //         printf("%.0f,",dist[mappingCount*i+j]);
+        //     }
+        //     printf("] ");
+        // }
+        // printf("\n");
 
 
         // printf("f1: ");
@@ -1287,16 +1354,17 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
         // multi_time1 = seconds();
 
         // Back-propagation
-         std::cout << "--------------backward--------------"<< std::endl;
-        for (int d = level - 1; d > 0; --d) {
+        //  std::cout << "--------------backward--------------"<< std::endl;
+        for (int d = level - 1; d > 0; d--) {
             int degree =(stackOffset[d+1] - stackOffset[d]);
             int blocknum = (degree < INT_MAX) ? degree : INT_MAX;
-            std::cout << "backward level(" << d << "):\t" << stackOffset[d+1] - stackOffset[d] << std::endl;
-            for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++)
+            // std::cout << "backward level(" << d << "):\t" << stackOffset[d+1] - stackOffset[d] << std::endl;
+            for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++){
                 deltaCalculation_MS<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_delta,g_sigma,g_stack,g_dist,INT_MAX,i,stackOffset[d],degree,mappingCount);
-            
-            CHECK(cudaDeviceSynchronize());
-
+                CHECK(cudaDeviceSynchronize());
+            }
+                
+            // cudaDeviceSynchronize();
             #pragma  region print
             // CHECK(cudaMemcpy(&delta[0], g_delta,   multi_size * sizeof(float),cudaMemcpyDeviceToHost));
             // printf("delta: ");
@@ -1310,7 +1378,8 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
             // printf("\n");
             #pragma  endregion
         }
-        sum_BC_Result_MS<<<ceil(V/64.0),min(V,64)>>>(g_BC,g_delta,V,g_map_S,mappingCount);
+        int shared_mem_size = (mappingCount) * sizeof(int);
+        sum_BC_Result_MS<<<ceil(V/128.0),min(V,128),shared_mem_size>>>(g_BC,g_delta,V,g_map_S,mappingCount);
         CHECK(cudaDeviceSynchronize());
 
         
@@ -1318,7 +1387,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
         // multi_time2 = seconds();
         // multi_backward_Time += (multi_time2 - multi_time1);
     }
-
+    CHECK(cudaMemcpy(&BC[0],g_BC, V*sizeof(float),cudaMemcpyDeviceToHost));
     // multi_time_end = seconds();
     // multi_total_time = (multi_time_end - multi_time_start);
 
