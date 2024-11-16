@@ -694,7 +694,7 @@ __global__ void allBC(int* g_csrV,int* g_csrE ,int* nextQueueSize,int* currentQu
         register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x;
         if(position < g_csrV[node+1] ){
             // printf("node: %d ,position: %d, dist: %d\n",node,g_csrE[position],dist[g_csrE[position]]);
-            if(dist[node] + 1 < dist[g_csrE[position]]){
+            if(dist[node] + 1.0 < dist[g_csrE[position]]){
                 //Unweighted
                 // dist[g_csrE[position]] = dist[node] + 1;
                 //Weighted
@@ -729,7 +729,7 @@ __global__ void deltaCalculation(int* g_csrV,int* g_csrE,float* g_delta,int* sig
 
     for(int i=0;i<threadOffset;i++) {
         register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x;
-        if(position < g_csrV[node+1] && dist[node] - 1 == dist[g_csrE[position]]){
+        if(position < g_csrV[node+1] && dist[node] - 1.0 == dist[g_csrE[position]]){
             // printf("traverse node: %d\n",node);
             atomicAdd(&g_delta[g_csrE[position]],((float)sigma[g_csrE[position]]/sigma[node])*(1.0+g_delta[node]));
             //printf("%d(%d,%.2f) %d(%d,%.2f)\n",node,level[node],sigma[node],adjacencyList[position],level[adjacencyList[position]],sigma[adjacencyList[position]]);
@@ -938,7 +938,7 @@ __global__ void deltaCalculation_MS(int* g_csrV,int* g_csrE,float* g_delta,int* 
                 if (traverse_S & (1ULL << multi_node)) {
                     register const int position_v = mappingcount * node           + multi_node;
                     register const int position_n = mappingcount * neighborNodeID + multi_node;
-                    if(dist[position_v] - 1 == dist[position_n]){
+                    if(dist[position_v] - 1.0 == dist[position_n]){
                         atomicAdd(&g_delta[position_n],((float)sigma[position_n]/sigma[position_v])*(1.0+g_delta[position_v]));
                     }
                 }
@@ -1005,7 +1005,7 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
                     // 更新 dist_MULTI 和 sigma_MULTI
                     
                     // printf("ok1\n");
-                    if (dist[position_n] > dist[position_v] + 1) {
+                    if (dist[position_n] > dist[position_v] + 1.0f) {
                         old = atomicMinFloat(&dist[position_n], (dist[position_v] + 1.0));
                         
                         if(old != dist[position_n]){
@@ -1044,7 +1044,7 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
                         // sigma[position_n] = sigma[position_v];
                     }
 
-                    if (dist[position_n] == dist[position_v] + 1) {
+                    if (dist[position_n] == dist[position_v] + 1.0f) {
                         atomicAdd(&sigma[position_n], sigma[position_v]);
                     }
 
@@ -1053,39 +1053,6 @@ __global__ void allBC_MS(int* g_csrV,int* g_csrE ,int* nextQueueSize,Q_struct* c
             }    
         }
     }
-
-    // if((bid||threadIdx.x)==0 && *nextQueueSize){
-        
-    //     // for (int k = 0; k < *nextQueueSize; k++){
-    //     //     // printf("[ %d,%ld ]\n",nextQueue_temp[j].nodeID,nextQueue_temp[j].traverse_S);
-    //     //     printf("[%d,%lu]>",nextQueue[k].nodeID,nextQueue[k].traverse_S);
-    //     // }
-    //     // printf("\n");
-
-    //     Q_struct nextQueue_temp[sizeof(nextQueue)];//V
-    //     register int nextQueue_temp_size=1;
-    //     // printf("sizeof(nextQueue):%lu\n",sizeof(nextQueue));
-    //     printf("*nextQueueSize1: %d\n",*nextQueueSize);
-    //     nextQueue_temp[0]=nextQueue[0];
-    //     for (int i = 1; i < *nextQueueSize; i++){
-    //         for (int j = 0; j < nextQueue_temp_size; j++){
-    //             if(nextQueue[i].nodeID==nextQueue_temp[j].nodeID){
-    //                 nextQueue_temp[j].traverse_S|=nextQueue[i].traverse_S;
-    //                 goto next_element;
-    //             }
-    //         }
-    //         // printf("nextQueue_temp_size:%d nextQueue_size:%d\n",nextQueue_temp_size,i);
-    //         nextQueue_temp[nextQueue_temp_size++]=nextQueue[i];
-    //         next_element:;
-    //     }
-
-    //     for (int j = 0; j < nextQueue_temp_size; j++){
-    //         // printf("[ %d,%ld ]\n",nextQueue_temp[j].nodeID,nextQueue_temp[j].traverse_S);
-    //         nextQueue[j]=nextQueue_temp[j];
-    //     }
-    //     *nextQueueSize=nextQueue_temp_size;
-    //     printf("*nextQueueSize2: %d\n",*nextQueueSize);
-    // }
 
 }
 
