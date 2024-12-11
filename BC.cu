@@ -68,17 +68,25 @@ inline void resetQueue(struct qQueue* _Q){
 }
 
 void check_ans(std::vector<float> ans, std::vector<float> my_ans);
-void brandes_ORIGIN(const CSR& csr, int V, vector<float> &BC);
-void brandes_ORIGIN_for_Seq(const CSR& csr, int V, vector<float> &BC);
-void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC);
-void brandes_SS_par(const CSR& csr, int V, float *BC);
-void brandes_MS_par(const CSR& csr, int max_multi, float* BC);
-void brandes_MS_par_VnextQ(const CSR& csr, int max_multi, float* BC);
-
+void brandes_ORIGIN( CSR& csr, int V, vector<float> &BC);
+void brandes_ORIGIN_for_Seq( CSR& csr, int V, vector<float> &BC);
+void Seq_multi_source_brandes_ordered( CSR& csr, int max_multi, vector<float> &BC);
+void Seq_multi_source_brandes(CSR& csr, int max_multi, vector<float> &BC);
+void brandes_SS_par( CSR& csr, int V, float *BC);
+void brandes_MS_par( CSR& csr, int max_multi, float* BC);
+void brandes_MS_par_VnextQ( CSR& csr, int max_multi, float* BC);
+void Seq_MS_brandes_me_D1_AP(CSR* csr, int max_multi, vector<float> &BC);
+void brandes_MS_Me_AP_D1( CSR& csr, int max_multi, float* BC);
 
 
 int main(int argc, char* argv[]){
+    if (argc < 3) {
+        cout << "Error: insufficient input arguments.\n";
+        cout << "Usage: " << argv[0] << " <datasetPath> <max_multi>\n";
+        return 1;
+    }
     char* datasetPath = argv[1];
+    int max_multi=stoi(argv[2]);
     printf("exeName = %s\n", argv[0]);
     printf("datasetPath = %s\n", datasetPath);
     struct Graph* graph = buildGraph(datasetPath);
@@ -95,36 +103,39 @@ int main(int argc, char* argv[]){
     printf("startNodeID: %d\n",csr->startNodeID);
     printf("endNodeID: %d\n",csr->endNodeID);
     printf("startAtZero: %d\n",csr->startAtZero);
-    int max_multi=4;
+    // int max_multi=32;
+
+
     time1 = seconds();
-    // brandes_ORIGIN(*csr,csr->csrVSize,ans);
-    brandes_SS_par(*csr,csr->csrVSize,ans_para);
+    // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
+    // // brandes_SS_par(*csr,csr->csrVSize,ans_para);
     // brandes_MS_par(*csr , max_multi , ans_para);
+    // // brandes_MS_par(*csr , max_multi , ans_para);
     time2 = seconds();
-    printf("done brandes_SS_par\n");
+    printf("done brandes_MS_par\n");
 
 
     multi_time1 = seconds();
-    
-    // Seq_multi_source_brandes( *csr , max_multi , my_BC );
-    // brandes_ORIGIN_OMP(*csr,csr->csrVSize,my_BC);
+    // Seq_multi_source_brandes_ordered( *csr , max_multi , my_BC );
     // showCSR(csr);
     // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,my_BC);
     // brandes_SS_par(*csr,csr->csrVSize,ans_para);
-    brandes_MS_par_VnextQ(*csr , max_multi , ans_para2); 
-    // brandes_MS_par(*csr , max_multi , ans_para2); 
+    // brandes_MS_par_VnextQ(*csr , max_multi , ans_para2); 
+    // brandes_MS_Me_para(*csr , max_multi , ans_para2); 
+    Seq_MS_brandes_me_D1_AP(csr , max_multi , ans_para_vec); 
     multi_time2 = seconds();
     printf("done brandes_SS_par\n");
+
     // computeBC_shareBased(csr,my_BC);
     // Seq_multi_source_brandes( *csr , max_multi , my_BC );
 
 
     //檢查答案
-    for(int i=0;i<csr->csrVSize;i++){
-        ans_para_vec[i]=ans_para[i];
-        ans_para_vec2[i]=ans_para2[i];
-    }
-    check_ans(ans_para_vec2,ans_para_vec);
+    // for(int i=0;i<csr->csrVSize;i++){
+    //     ans_para_vec[i]=ans_para[i];
+    //     ans_para_vec2[i]=ans_para2[i];
+    // }
+    // check_ans(ans,ans_para_vec2);
     
 
     #ifdef DEBUG
@@ -183,7 +194,69 @@ void check_ans( std::vector<float> ans, std::vector<float> my_ans) {
     return;
 }
 
-void brandes_ORIGIN(const CSR& csr, int V, vector<float> &BC) {
+void quicksort_nodeID_with_degree(int* _nodes, int* _nodeDegrees, int _left, int _right){
+    if(_left > _right){
+        return;
+    }
+    int smallerAgent = _left;
+    int smallerAgentNode = -1;
+    int equalAgent = _left;
+    int equalAgentNode = -1;
+    int largerAgent = _right;
+    int largerAgentNode = -1;
+
+    int pivotNode = _nodes[_right];
+    // printf("pivot : degree[%d] = %d .... \n", pivotNode, _nodeDegrees[pivotNode]);
+    int tempNode = 0;
+    while(equalAgent <= largerAgent){
+        #ifdef DEBUG
+        // printf("\tsmallerAgent = %d, equalAgent = %d, largerAgent = %d\n", smallerAgent, equalAgent, largerAgent);
+        #endif
+
+        smallerAgentNode = _nodes[smallerAgent];
+        equalAgentNode = _nodes[equalAgent];
+        largerAgentNode = _nodes[largerAgent];
+        
+        #ifdef DEBUG
+        // printf("\tDegree_s[%d] = %d, Degree_e[%d] = %d, Degree_l[%d] = %d\n", smallerAgentNode, _nodeDegrees[smallerAgentNode], equalAgentNode, _nodeDegrees[equalAgentNode], largerAgentNode, _nodeDegrees[largerAgentNode]);
+        #endif
+
+        if(_nodeDegrees[equalAgentNode] > _nodeDegrees[pivotNode]){ //equalAgentNode的degree < pivotNode的degree
+            // swap smallerAgentNode and equalAgentNode
+            tempNode = _nodes[smallerAgent];
+            _nodes[smallerAgent] = _nodes[equalAgent];
+            _nodes[equalAgent] = tempNode;
+
+            smallerAgent ++;
+            equalAgent ++;
+        }
+        else if(_nodeDegrees[equalAgentNode] < _nodeDegrees[pivotNode]){ //equalAgentNode的degree > pivotNode的degree
+            // swap largerAgentNode and equalAgentNode
+            tempNode = _nodes[largerAgent];
+            _nodes[largerAgent] = _nodes[equalAgent];
+            _nodes[equalAgent] = tempNode;
+
+            largerAgent --;
+        }
+        else{ //equalAgentNode的degree == pivotNode的degree
+            equalAgent ++;
+        }
+
+    }
+    
+    // exit(1);
+    #ifdef DEBUG
+        
+    #endif
+
+    // smallerAgent現在是pivot key的開頭
+    // largerAgent現在是pivotKey的結尾
+    quicksort_nodeID_with_degree(_nodes, _nodeDegrees, _left, smallerAgent - 1);
+    quicksort_nodeID_with_degree(_nodes, _nodeDegrees, largerAgent + 1, _right);
+}
+
+
+void brandes_ORIGIN( CSR& csr, int V, vector<float> &BC) {
     // time_start = seconds();
 
     // Initialize queues
@@ -298,7 +371,7 @@ void brandes_ORIGIN(const CSR& csr, int V, vector<float> &BC) {
     free(current_queue);
 }
 
-void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) {
+void Seq_multi_source_brandes( CSR& csr, int max_multi, vector<float> &BC) {
     // Start timing
     // multi_time_start = seconds();
 
@@ -496,7 +569,219 @@ void Seq_multi_source_brandes(const CSR& csr, int max_multi, vector<float> &BC) 
     free(dist_INIT);
 }
 
-void brandes_ORIGIN_for_Seq(const CSR& csr, int V, vector<float> &BC) {
+void Seq_multi_source_brandes_ordered( CSR& csr, int max_multi, vector<float> &BC) {
+    // Start timing
+    // multi_time_start = seconds();
+
+    int v_size = csr.csrVSize;
+    int* map_S = (int*)malloc(sizeof(int) * max_multi); // Multiple sources
+    bool* nodeDone = (bool*)calloc(v_size, sizeof(bool));
+
+    size_t multi_size = v_size * max_multi;
+
+    int* s_size = (int*)malloc(sizeof(int) * v_size);
+    float* dist_MULTI = (float*)malloc(sizeof(float) * multi_size);
+    float* sigma_MULTI = (float*)malloc(sizeof(float) * multi_size);
+    float* delta_MULTI = (float*)malloc(sizeof(float) * multi_size);
+
+    Q_struct** s = (Q_struct**)malloc(v_size * sizeof(Q_struct*));
+    Q_struct* f1 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
+    Q_struct* f2 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
+
+    // Pre-initialize dist_MULTI to INFINITE
+    float* dist_INIT = (float*)malloc(sizeof(float) * multi_size);
+    
+    for (size_t i = 0; i < multi_size; i++) {
+        dist_INIT[i] = INFINITE;
+    }
+
+    //order ID by degree
+    csr.orderedCsrV  = (int*)calloc(sizeof(int), (csr.csrVSize) *2);
+    for(int i=csr.startNodeID;i<=csr.endNodeID;i++){
+            csr.orderedCsrV[i]=i;
+    }
+    quicksort_nodeID_with_degree(csr.orderedCsrV, csr.csrNodesDegree, csr.startNodeID, csr.endNodeID);
+    // cout<<"after sort\n";
+    // for(int i=csr.startNodeID;i<=csr.endNodeID;i++){
+    //     cout<<csr.orderedCsrV[i]<<"[ "<<csr.csrNodesDegree[csr.orderedCsrV[i]]<<" ]>";
+    // }
+    // cout<<endl;
+
+    for (int sourceIndex = csr.startNodeID; sourceIndex <= csr.endNodeID; ++sourceIndex) {
+        int sourceID =csr.orderedCsrV[sourceIndex];
+        if (nodeDone[sourceID]) continue;
+
+        // multi_time1 = seconds();
+
+        nodeDone[sourceID] = true;
+        int mappingCount = 0;
+        map_S[mappingCount++] = sourceID;
+
+        // Find other sources
+        for (int neighborIndex = csr.csrV[sourceID]; neighborIndex < csr.csrV[sourceID + 1] && mappingCount < max_multi; neighborIndex++) {
+            int neighborNodeID = csr.csrE[neighborIndex];
+            if (!nodeDone[neighborNodeID]) {
+                map_S[mappingCount++] = neighborNodeID;
+                nodeDone[neighborNodeID] = true;
+            }
+        }
+
+        // Initialize dist_MULTI, sigma_MULTI, delta_MULTI
+        memcpy(dist_MULTI, dist_INIT, sizeof(float) * multi_size);
+        memset(sigma_MULTI, 0, sizeof(float) * multi_size);
+        memset(delta_MULTI, 0, sizeof(float) * multi_size);
+        memset(s_size, 0, sizeof(int) * v_size);
+
+        int f1_indicator = 0;
+        int f2_indicator = 0;
+        int s_indicator = 0;
+
+        // Initialize currentQueue
+        for (int i = 0; i < mappingCount; i++) {
+            int sourceNode = map_S[i];
+            int position = mappingCount * sourceNode + i;
+            sigma_MULTI[position] = 1.0;
+            dist_MULTI[position] = 0.0;
+
+            f1[f1_indicator].nodeID = sourceNode;
+            f1[f1_indicator].traverse_S = (1ULL << i);
+            f1_indicator++;
+        }
+
+        // Initialize nextQueue traverse_S to zero
+        for (int i = 0; i < v_size; i++) {
+            f2[i].traverse_S = 0;
+        }
+
+        int level=0;
+        while (f1_indicator > 0) {
+
+            Q_struct* currentQueue;
+            Q_struct* nextQueue;
+            if(level% 2 == 0){
+                currentQueue = f1;
+                nextQueue = f2;
+            }
+            else{
+                currentQueue = f2;
+                nextQueue = f1;
+            }
+            // Store currentQueue into s[s_indicator]
+            s[s_indicator] = (Q_struct*)malloc(f1_indicator * sizeof(Q_struct));
+            memcpy(s[s_indicator], currentQueue, f1_indicator * sizeof(Q_struct));
+            s_size[s_indicator++] = f1_indicator;
+
+            // Process currentQueue
+            for (auto i = 0; i < f1_indicator; i++) {
+                int v = currentQueue[i].nodeID;
+                uint64_t traverse_S = currentQueue[i].traverse_S;
+
+                for (auto neighborIndex = csr.csrV[v]; neighborIndex < csr.csrV[v + 1]; neighborIndex++) {
+                    int neighborNodeID = csr.csrE[neighborIndex];
+
+                    for (auto multi_node = 0; multi_node < mappingCount; multi_node++) {
+                        if (traverse_S & (1ULL << multi_node)) {
+                            int position_v = mappingCount * v + multi_node;
+                            int position_n = mappingCount * neighborNodeID + multi_node;
+
+                            if (dist_MULTI[position_n] == dist_MULTI[position_v] + 1) {
+                                sigma_MULTI[position_n] += sigma_MULTI[position_v];
+                            } else if (dist_MULTI[position_n] > dist_MULTI[position_v] + 1) {
+                                dist_MULTI[position_n] = dist_MULTI[position_v] + 1;
+                                sigma_MULTI[position_n] = sigma_MULTI[position_v];
+
+                                // Check if neighborNodeID is already in nextQueue
+                                int found = -1;
+                                for (auto find = 0; find < f2_indicator; find++) {
+                                    if (nextQueue[find].nodeID == neighborNodeID) {
+                                        found = find;
+                                        break;
+                                    }
+                                }
+                                if (found >= 0) {
+                                    nextQueue[found].traverse_S |= (1ULL << multi_node);
+                                } else {
+                                    nextQueue[f2_indicator].nodeID = neighborNodeID;
+                                    nextQueue[f2_indicator].traverse_S = (1ULL << multi_node);
+                                    f2_indicator++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Swap currentQueue and nextQueue
+            f1_indicator = f2_indicator;
+            f2_indicator = 0;
+            level++;
+            // Reset nextQueue traverse_S for next iteration
+            // for (int i = 0; i < f1_indicator; i++) {
+            //     nextQueue[i].traverse_S = 0;
+            // }
+        }
+
+        // multi_time2 = seconds();
+        // multi_forward_Time += (multi_time2 - multi_time1);
+        // multi_time1 = seconds();
+
+        // Back-propagation
+        for (int layer = s_indicator - 1; layer >= 0; layer--) {
+            for (int i = 0; i < s_size[layer]; i++) {
+                int v = s[layer][i].nodeID;
+                uint64_t traverse_S = s[layer][i].traverse_S;
+
+                for (int multi_node = 0; multi_node < mappingCount; multi_node++) {
+                    if (traverse_S & (1ULL << multi_node)) {
+                        int position_v = mappingCount * v + multi_node;
+
+                        float coeff = 0.0;
+
+                        // For each neighbor w of v
+                        for (int neighborIndex = csr.csrV[v]; neighborIndex < csr.csrV[v + 1]; neighborIndex++) {
+                            int w = csr.csrE[neighborIndex];
+                            int position_w = mappingCount * w + multi_node;
+
+                            if (dist_MULTI[position_w] == dist_MULTI[position_v] + 1) {
+                                coeff += (sigma_MULTI[position_v] / sigma_MULTI[position_w]) * (1.0 + delta_MULTI[position_w]);
+                            }
+                        }
+
+                        delta_MULTI[position_v] += coeff;
+
+                        // If v is not the source node, accumulate delta into BC[v]
+                        if (v != map_S[multi_node]) {
+                            BC[v] += delta_MULTI[position_v];
+                        }
+                    }
+                }
+            }
+            // Free s[layer]
+            free(s[layer]);
+        }
+
+        // multi_time2 = seconds();
+        // multi_backward_Time += (multi_time2 - multi_time1);
+    }
+
+    // multi_time_end = seconds();
+    // multi_total_time = (multi_time_end - multi_time_start);
+
+    // Free memory
+    free(s_size);
+    free(dist_MULTI);
+    free(sigma_MULTI);
+    free(delta_MULTI);
+    free(map_S);
+    free(nodeDone);
+    free(s);
+    free(f1);
+    free(f2);
+    free(dist_INIT);
+}
+
+
+void brandes_ORIGIN_for_Seq( CSR& csr, int V, vector<float> &BC) {
     // time_start = seconds();
 
   
@@ -624,6 +909,67 @@ void brandes_ORIGIN_for_Seq(const CSR& csr, int V, vector<float> &BC) {
     free(delta);
     free(S_size);
 }
+
+
+void Seq_MS_brandes_me_D1_AP(CSR* csr, int max_multi, vector<float> &BC) {
+    // Start timing
+    // multi_time_start = seconds();
+
+    int v_size = csr->csrVSize;
+    int* map_S = (int*)malloc(sizeof(int) * max_multi); // Multiple sources
+    bool* nodeDone = (bool*)calloc(v_size, sizeof(bool));
+
+    size_t multi_size = v_size * max_multi;
+
+    int* s_size = (int*)malloc(sizeof(int) * v_size);
+    float* dist_MULTI = (float*)malloc(sizeof(float) * multi_size);
+    float* sigma_MULTI = (float*)malloc(sizeof(float) * multi_size);
+    float* delta_MULTI = (float*)malloc(sizeof(float) * multi_size);
+
+    Q_struct** s = (Q_struct**)malloc(v_size * sizeof(Q_struct*));
+    Q_struct* f1 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
+    Q_struct* f2 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
+
+    // Pre-initialize dist_MULTI to INFINITE
+    float* dist_INIT = (float*)malloc(sizeof(float) * multi_size);
+    
+    for (size_t i = 0; i < multi_size; i++) {
+        dist_INIT[i] = INFINITE;
+    }
+    // showCSR(csr);
+    //D1 Folding
+    D1Folding(csr);
+    // for(int i=0;i<csr->csrVSize;i++){
+    //     std::cout<<"_csr->representNode["<<i<<"]: "<<csr->representNode[i]<<"\t_csr->ff["<<i<<"]: "<<csr->ff[i]<<endl;
+    // }
+
+    // showCSR(csr);
+    //標記那些node是AP
+    AP_detection(csr);
+    //做3case的分割
+    AP_Copy_And_Split_BC(csr);
+
+    // struct newID_info* newID_infos = rebuildGraph(csr);
+    // for(int i=0;i< csr->ap_count;i++){
+    //     cout<<csr->AP_List[i]<<" ";
+    // }
+    // cout<<"csr.ap_count: "<<csr->ap_count<<"\n";
+    // multi_time_end = seconds();
+    // multi_total_time = (multi_time_end - multi_time_start);
+
+    // Free memory
+    free(s_size);
+    free(dist_MULTI);
+    free(sigma_MULTI);
+    free(delta_MULTI);
+    free(map_S);
+    free(nodeDone);
+    free(s);
+    free(f1);
+    free(f2);
+    free(dist_INIT);
+}
+
 
 __global__ void resetBC_value(float* dist,int* f1,int* sigma,float* delta,int* stack,int* level,int target,int size){
 
@@ -766,7 +1112,7 @@ __global__ void sum_BC_Result(float* result,float* delta,int size,int s){
 
 
 
-void brandes_SS_par(const CSR& csr, int V, float *BC) {
+void brandes_SS_par( CSR& csr, int V, float *BC) {
 
     //CPU variable
     int    currentQueueSize;
@@ -1173,7 +1519,7 @@ __global__ void rearrange_queue_MS(Q_struct* nextQueue,Q_struct* nextQueue_temp,
 }
 
 
-void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
+void brandes_MS_par( CSR& csr, int max_multi, float* BC) {
     // Start timing
     // multi_time_start = seconds();
 
@@ -1451,7 +1797,7 @@ void brandes_MS_par(const CSR& csr, int max_multi, float* BC) {
 }
 
 
-void brandes_MS_par_VnextQ(const CSR& csr, int max_multi, float* BC) {
+void brandes_MS_par_VnextQ( CSR& csr, int max_multi, float* BC) {
     // Start timing
     // multi_time_start = seconds();
 
@@ -1512,10 +1858,17 @@ void brandes_MS_par_VnextQ(const CSR& csr, int max_multi, float* BC) {
     // std::cout << "Free GPU memory: " << free_byte / (1024.0 * 1024.0) << " MB" << std::endl;
     int threadnum = 32;
 
+    //order ID by degree
+    csr.orderedCsrV  = (int*)calloc(sizeof(int), (csr.csrVSize) *2);
+    for(int i=csr.startNodeID;i<=csr.endNodeID;i++){
+            csr.orderedCsrV[i]=i;
+    }
+    quicksort_nodeID_with_degree(csr.orderedCsrV, csr.csrNodesDegree, csr.startNodeID, csr.endNodeID);
+
 
     //origin
-
-    for (int sourceID = csr.startNodeID; sourceID <= csr.endNodeID; ++sourceID) {
+    for (int sourceIndex = csr.startNodeID; sourceIndex <= csr.endNodeID; ++sourceIndex) {
+        int sourceID=csr.orderedCsrV[sourceIndex];
         if (nodeDone[sourceID]) continue;
 
         // multi_time1 = seconds();
@@ -1525,14 +1878,20 @@ void brandes_MS_par_VnextQ(const CSR& csr, int max_multi, float* BC) {
         map_S[mappingCount++] = sourceID;
 
         // Find other sources
-        for (int neighborIndex = csr.csrV[sourceID]; neighborIndex < csr.csrV[sourceID + 1] && mappingCount < max_multi; neighborIndex++) {
-            int neighborNodeID = csr.csrE[neighborIndex];
+        // for (int neighborIndex = csr.csrV[sourceID]; neighborIndex < csr.csrV[sourceID + 1] && mappingCount < max_multi; neighborIndex++) {
+        //     int neighborNodeID = csr.csrE[neighborIndex];
+        //     if (!nodeDone[neighborNodeID]) {
+        //         map_S[mappingCount++] = neighborNodeID;
+        //         nodeDone[neighborNodeID] = true;
+        //     }
+        // }
+        for (int neighborIndex = csr.startNodeID; neighborIndex <= csr.endNodeID && mappingCount < max_multi; neighborIndex++) {
+            int neighborNodeID = csr.orderedCsrV[neighborIndex];
             if (!nodeDone[neighborNodeID]) {
                 map_S[mappingCount++] = neighborNodeID;
                 nodeDone[neighborNodeID] = true;
             }
         }
-        
 
 
         // Initialize dist_MULTI, sigma_MULTI, delta_MULTI
@@ -1711,6 +2070,9 @@ void brandes_MS_par_VnextQ(const CSR& csr, int max_multi, float* BC) {
         // multi_backward_Time += (multi_time2 - multi_time1);
     }
     CHECK(cudaMemcpy(&BC[0],g_BC, V*sizeof(float),cudaMemcpyDeviceToHost));
+
+
+
     // multi_time_end = seconds();
     // multi_total_time = (multi_time_end - multi_time_start);
     // 釋放所有 GPU 資源
@@ -1734,7 +2096,7 @@ void brandes_MS_par_VnextQ(const CSR& csr, int max_multi, float* BC) {
 
 
 
-void brandes_MS_Me_para(const CSR& csr, int max_multi, float* BC) {
+void brandes_MS_Me_AP_D1( CSR& csr, int max_multi, float* BC) {
     // Start timing
     // multi_time_start = seconds();
 
@@ -1776,9 +2138,7 @@ void brandes_MS_Me_para(const CSR& csr, int max_multi, float* BC) {
     cudaMalloc((void **)&g_delta,multi_size * sizeof(float));
     cudaMalloc((void **)&g_S_size,V* sizeof(int));
     
-    size_t free_byte;
-    size_t total_byte;
-    cudaMemGetInfo(&free_byte,&total_byte);
+
     cudaMalloc((void **)&g_f1, multi_size * sizeof(Q_struct)); //free_byte * 0.3
     cudaMalloc((void **)&g_f2, multi_size * sizeof(Q_struct)); //free_byte * 0.3
     cudaMalloc((void **)&g_nextQueue_temp,V * sizeof(Q_struct));
@@ -1797,15 +2157,17 @@ void brandes_MS_Me_para(const CSR& csr, int max_multi, float* BC) {
 
 
     //origin
-
+    int time_sum=0;
+    int times=0;
     for (int sourceID = csr.startNodeID; sourceID <= csr.endNodeID; ++sourceID) {
         if (nodeDone[sourceID]) continue;
 
         // multi_time1 = seconds();
-        int mappingCount = 0;
+        times++;
         nodeDone[sourceID] = true;
+        int mappingCount = 0;
         map_S[mappingCount++] = sourceID;
-        currentQueueSize = 1; //從single source開始 in phase1
+
         // Find other sources
         for (int neighborIndex = csr.csrV[sourceID]; neighborIndex < csr.csrV[sourceID + 1] && mappingCount < max_multi; neighborIndex++) {
             int neighborNodeID = csr.csrE[neighborIndex];
@@ -1821,8 +2183,9 @@ void brandes_MS_Me_para(const CSR& csr, int max_multi, float* BC) {
         //初始g_f1 queue
         cudaMemcpy(g_map_S,map_S, mappingCount * sizeof(int),cudaMemcpyHostToDevice);
         resetBC_value_MS<<<ceil(multi_size/64.0),min(multi_size,64)>>>(g_dist,g_f1,g_f2,g_sigma,g_delta,g_stack,sourceID,multi_size);
-        cudaMemset(g_nextQueueSize,0,sizeof(int));
         cudaDeviceSynchronize();
+        cudaMemset(g_nextQueueSize,0,sizeof(int));
+        currentQueueSize = mappingCount;
         memset(stackOffset, 0, sizeof(int) * multi_size);
         INITIAL_value_MS<<<ceil(mappingCount/64.0),min(mappingCount,64)>>>(g_dist,g_f1,g_sigma,g_map_S,mappingCount);
         cudaDeviceSynchronize();
@@ -1856,19 +2219,24 @@ void brandes_MS_Me_para(const CSR& csr, int max_multi, float* BC) {
         // for(int i=0;i<mappingCount;i++){
         //     printf("%d ",map_S[i]);
         // }
-        // printf("\n");
+        // printf("--times:%d\n",times);
 
         // printf("f1: ");
         // for(int i=0;i<multi_size;i++){
-        //     printf("[%d, %d]> ",f1[i].nodeID,f1[i].traverse_S);
+        //     printf("[%d, %lu]> ",f1[i].nodeID,f1[i].traverse_S);
         // }
         // printf("\n");
         #pragma  endregion
 
+        // int f1_indicator = 0;
+        // int f2_indicator = 0;
+        // int s_indicator = 0;
+       
 
         int level=0;
         while (currentQueueSize > 0) { //currentQueueSize > 0
-            // std::cout<<"currentQueueSize: "<<currentQueueSize<<std::endl;
+            time_sum+=currentQueueSize;
+            // std::cout<<"time_sum: "<<time_sum<<std::endl;
             Q_struct* g_currentQueue;
             Q_struct* g_nextQueue;
             INITIAL_Qtruct<<<ceil(V/64.0),min(V,64)>>>(g_nextQueue_temp,V);
@@ -1880,11 +2248,8 @@ void brandes_MS_Me_para(const CSR& csr, int max_multi, float* BC) {
             
             stackOffset[level+1] = currentQueueSize + stackOffset[level];
             int blocknum = (currentQueueSize < INT_MAX) ? currentQueueSize : INT_MAX;
-            
-            //平行跑 two-phase的BFS
-            //phase one BFS
-
-            //phase two BFS
+            //平行跑BFS
+            // printf("currentQueueSize: %d\n",currentQueueSize);
             for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++){
                 // allBC_MS<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist,g_sigma,INT_MAX,i,currentQueueSize,mappingCount);
                 allBC_MS_VnextQ<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_currentQueue,g_nextQueue_temp,g_dist,g_sigma,INT_MAX,i,currentQueueSize,mappingCount);
@@ -1905,6 +2270,7 @@ void brandes_MS_Me_para(const CSR& csr, int max_multi, float* BC) {
 
 
             #pragma  region print
+            
             // CHECK(cudaMemcpy(&queue[0],g_nextQueue, currentQueueSize*sizeof(Q_struct),cudaMemcpyDeviceToHost));
             // printf("real_f1: ");
             // for(int i=0;i<currentQueueSize;i++){
@@ -1982,7 +2348,7 @@ void brandes_MS_Me_para(const CSR& csr, int max_multi, float* BC) {
             #pragma  endregion
         }
         int shared_mem_size = (mappingCount) * sizeof(int);
-        sum_BC_Result_MS<<<ceil(V/64.0),min(V,64),shared_mem_size>>>(g_BC,g_delta,V,g_map_S,mappingCount);
+        sum_BC_Result_MS<<<ceil(V/128.0),min(V,128),shared_mem_size>>>(g_BC,g_delta,V,g_map_S,mappingCount);
         CHECK(cudaDeviceSynchronize());
 
         
@@ -1991,6 +2357,9 @@ void brandes_MS_Me_para(const CSR& csr, int max_multi, float* BC) {
         // multi_backward_Time += (multi_time2 - multi_time1);
     }
     CHECK(cudaMemcpy(&BC[0],g_BC, V*sizeof(float),cudaMemcpyDeviceToHost));
+    cout << "avg_time: " << static_cast<double>(time_sum) / (times * V) << endl;
+
+
     // multi_time_end = seconds();
     // multi_total_time = (multi_time_end - multi_time_start);
     // 釋放所有 GPU 資源
