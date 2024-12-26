@@ -1,5 +1,5 @@
-#ifndef COMMON
-#define COMMON
+// #ifndef COMMON
+// #define COMMON
 #include <stdio.h>
 #include <iostream>
 #include <stdlib.h>
@@ -7,13 +7,15 @@
 #include <iomanip>  // 需要包含這個頭文件以使用 setprecision
 #include <cuda_runtime.h>
 #include "device_atomic_functions.h"
-#endif
+// #endif
+
 #include <vector>
+#include <queue>
 using namespace std;
 #include "headers.h"
 #define INFINITE 1000000000
 // #define DEBUGx
-
+// #define DEBUG
 
 // Updated Q_struct definition
 typedef struct q_struct {
@@ -69,13 +71,35 @@ inline void resetQueue(struct qQueue* _Q){
 
 void check_ans(std::vector<float> ans, std::vector<float> my_ans);
 void brandes_ORIGIN_for_Seq( CSR& csr, int V, vector<float> &BC);
+void brandes_with_predecessors(CSR& csr, int V, float* BC);
+void computeCC_ans(struct CSR* _csr, int* _CCs);
+
 void Seq_multi_source_brandes_ordered( CSR& csr, int max_multi, vector<float> &BC);
 void Seq_multi_source_brandes(CSR& csr, int max_multi, vector<float> &BC);
+
 void brandes_SS_par( CSR& csr, int V, float *BC);
+
 void brandes_MS_par( CSR& csr, int max_multi, float* BC);
 void brandes_MS_par_VnextQ( CSR& csr, int max_multi, float* BC);
 void Seq_MS_brandes_me_D1_AP(CSR* csr, int max_multi, vector<float> &BC);
 void brandes_MS_Me_AP_D1( CSR& csr, int max_multi, float* BC);
+
+//test 程式
+void computeCC_shareBased_oneTraverse(struct CSR* _csr, int* _CCs);
+void computeBC_shareBased_Successor_SS( CSR* _csr, float* _BCs);
+void computeBC_shareBased_Successor_MS( CSR* _csr, float* _BCs);
+
+void printbinary(int data,int mappingcount){
+    int count = mappingcount;
+    while(count--){
+        int byte = (data>>count) &1;
+        printf("%d",byte);
+        if(count%8==0){
+            printf(" ");
+        }
+    }
+    printf("]\n");
+}
 
 
 int main(int argc, char* argv[]){
@@ -92,6 +116,8 @@ int main(int argc, char* argv[]){
     struct CSR* csr     = createCSR(graph);
 
     vector<float> ans(csr->csrVSize,0.0);
+    int *ans_CC= (int*)calloc(csr->csrVSize, sizeof(int));
+    int *my_CC= (int*)calloc(csr->csrVSize, sizeof(int));
     float *ans_para= (float*)calloc(csr->csrVSize, sizeof(float));
     float *ans_para2= (float*)calloc(csr->csrVSize, sizeof(float));
     vector<float> my_BC(csr->csrVSize,0.0);
@@ -106,41 +132,60 @@ int main(int argc, char* argv[]){
 
 
     time1 = seconds();
+    // computeCC_shareBased_oneTraverse(csr,my_CC);
+    // cout<<"max_degree: "<<csr->maxDegree<<endl;
     // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
     // // brandes_SS_par(*csr,csr->csrVSize,ans_para);
     // brandes_MS_par(*csr , max_multi , ans_para);
     // // brandes_MS_par(*csr , max_multi , ans_para);
+    brandes_with_predecessors(*csr,csr->csrVSize,ans_para);
     time2 = seconds();
-    printf("done brandes_MS_par\n");
+    printf("done brandes_with_predecessors\n");
 
 
     multi_time1 = seconds();
+    // computeCC_ans(csr,ans_CC);
+    // brandes_with_predecessors(*csr,csr->csrVSize,ans_para);
+    computeBC_shareBased_Successor(csr,ans_para2);
+
     // Seq_multi_source_brandes_ordered( *csr , max_multi , my_BC );
     // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,my_BC);
     // brandes_SS_par(*csr,csr->csrVSize,ans_para);
     // brandes_MS_par_VnextQ(*csr , max_multi , ans_para2); 
     // brandes_MS_Me_para(*csr , max_multi , ans_para2); 
-    Seq_MS_brandes_me_D1_AP(csr , max_multi , ans_para_vec); 
+    // Seq_MS_brandes_me_D1_AP(csr , max_multi , ans_para_vec); 
     multi_time2 = seconds();
-    printf("done brandes_SS_par\n");
+    printf("done computeBC_shareBased_Successor\n");
 
     // computeBC_shareBased(csr,my_BC);
     // Seq_multi_source_brandes( *csr , max_multi , my_BC );
 
 
-    //檢查答案
-    // for(int i=0;i<csr->csrVSize;i++){
-    //     ans_para_vec[i]=ans_para[i];
-    //     ans_para_vec2[i]=ans_para2[i];
-    // }
-    // check_ans(ans,ans_para_vec2);
+    //檢查答案BC
+    for(int i=0;i<csr->csrVSize;i++){
+        ans_para_vec[i]=ans_para[i];
+        ans_para_vec2[i]=ans_para2[i];
+    }
+    check_ans(ans_para_vec,ans_para_vec2);
     
+    //答案檢查CC
+    // bool flag=true;
+    // for(int node = csr->startNodeID;node<=csr->endNodeID;node++){
+    //     if(ans_CC[node]!=my_CC[node]){
+    //         printf("[ERROR] ans[%d]:%d\tmy[%d]:%d\n",node,ans_CC[node],node,my_CC[node]);
+    //         flag=false;
+    //     }
+    // }
+    // if(flag){
+    //     cout<<"[CORRECT] CC!!!\n";
+    // }
 
-    #ifdef DEBUG
-        for(auto i=0;i<csr->csrVSize;i++){
-            printf("BC[%d]: %f\n",i,ans[i]);
-        }
-    #endif
+
+    // #ifdef DEBUG
+    //     for(auto i=0;i<csr->csrVSize;i++){
+    //         printf("BC[%d]: %f\n",i,ans[i]);
+    //     }
+    // #endif
     //brandes end
     // showCSR(csr);
     // printf("\n=================================single_source run time=================================\n");
@@ -174,6 +219,8 @@ void check_ans( std::vector<float> ans, std::vector<float> my_ans) {
         float delta = std::fabs(ans[i] - my_ans[i]);
         // 計算允許的誤差範圍
         float error_rate = std::fabs(ans[i]) * epsilon;  // 基於 ans[i] 的相對誤差
+        // float error_rate =0.0;  // 基於 ans[i] 的相對誤差
+
         if (delta > error_rate) {
             // 顯示完整的小數精度
             std::cout << std::fixed << std::setprecision(6);
@@ -254,6 +301,1566 @@ void quicksort_nodeID_with_degree(int* _nodes, int* _nodeDegrees, int _left, int
 }
 
 
+
+//************************************************ */
+//                   循序_brandes SS原版
+//************************************************ */
+void brandes_ORIGIN_for_Seq( CSR& csr, int V, vector<float> &BC) {
+    // time_start = seconds();
+
+  
+
+    // Allocate memory for sigma, dist, delta, and the stack S
+    int**  S = (int**)malloc(V * sizeof(int*));      // S is a 2D array (stack)
+    int*   sigma = (int*)malloc(V * sizeof(int));     // sigma is a 1D array
+    int*   dist = (int*)malloc(V * sizeof(int));      // dist is a 1D array
+    float* delta = (float*)malloc(V * sizeof(float)); // delta is a 1D array
+    int*   S_size = (int*)malloc(V * sizeof(int));    // S_size records the size of each level
+    int*   f1 = (int*)malloc((V ) * sizeof(int));
+    int*   f2 = (int*)malloc((V ) * sizeof(int));
+    int    f1_indicator;
+    int    f2_indicator;
+
+    for (int i = 0; i < V; i++) {
+        S[i] = (int*)malloc(V *sizeof(int));       // Each level's stack size V, adjust as needed
+        S_size[i] = 0;                              // Initialize the size of each level
+    }
+
+    for (int s = csr.startNodeID; s <= csr.endNodeID; ++s) {
+        // Initialize variables for each source node
+        // time1 = seconds();
+        for (int i = 0; i < V; i++) {
+            free(S[i]);
+            S[i] = (int*)malloc(V*sizeof(int));   // Each level's stack size V, adjust as needed
+            sigma[i] = 0;
+            dist[i] = -1;
+            delta[i] = 0.0;
+            S_size[i] = 0; // Reset size of each level
+        }
+    
+        sigma[s] = 1;
+        dist[s] = 0;
+        f1_indicator = 0;
+        f2_indicator = 0;
+        // Re-initialize current_queue
+        f1[f1_indicator++] = s;
+        
+
+        int level =0;
+        // BFS forward phase: frontier-based BFS with extra mallocs
+        while (f1_indicator>0) { //!qIsEmpty(current_queue)
+            // printf("level: %d\n",level);
+            
+            // Allocate new memory for next_queue in each iteration
+            int* currentQueue;
+            int* nextQueue;
+            if(level% 2 == 0){
+                currentQueue = f1;
+                nextQueue = f2;
+            }
+            else{
+                currentQueue = f2;
+                nextQueue = f1;
+            }
+            
+            for(int v=0; v<f1_indicator; v++) {
+                int u = currentQueue[v];
+                S[level][S_size[level]++] = u;  // Put node u into its level
+                
+                // Traverse the adjacent nodes in CSR format
+                for (int i = csr.csrV[u]; i < csr.csrV[u + 1]; ++i) {
+                    int w = csr.csrE[i];
+                    
+                    // If w has not been visited, update distance and add to next_queue
+                    if (dist[w] < 0) {
+                        dist[w] = dist[u] + 1;
+                        nextQueue[f2_indicator++] = w;
+                        
+                    }
+
+                    // When a shortest path is found
+                    if (dist[w] == dist[u] + 1) {
+                        sigma[w] += sigma[u];
+                    }
+                }
+            }
+            
+            // Free current_queue and set it to next_queue for the next iteration
+            f1_indicator = f2_indicator;
+            f2_indicator = 0;
+            level++;
+            
+            // printf("level: %d\n",level);
+            // qShowAllElement(current_queue);
+            
+        }
+
+        // time2 = seconds();
+        // forward_Time += (time2 - time1);
+        // time1 = seconds();
+
+        // Backward phase to compute BC values
+        for (int d = level - 1; d >= 0; --d) {  // Start from the furthest level
+            
+            for (int i = 0; i < S_size[d]; ++i) {
+                int w = S[d][i];
+                
+                for (int j = csr.csrV[w]; j < csr.csrV[w + 1]; ++j) {
+                    int v = csr.csrE[j];
+                    if (dist[v] == dist[w] - 1) {
+                        delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
+                    }
+                }
+                if (w != s) {
+                    BC[w] += delta[w];
+                }
+            }
+            
+        }
+        // time2 = seconds();
+        // backward_Time += (time2 - time1);
+    }
+
+    // time_end = seconds();
+    // total_time = (time_end - time_start);
+    // Free memory for S and its levels
+    for (int i = 0; i < V; i++) {
+        free(S[i]);
+    }
+    free(S);
+    free(sigma);
+    free(dist);
+    free(delta);
+    free(S_size);
+}
+
+//循序_brandes切D1與AP
+void Seq_MS_brandes_me_D1_AP(CSR* csr, int max_multi, vector<float> &BC) {
+    // Start timing
+    // multi_time_start = seconds();
+
+    int v_size = csr->csrVSize;
+    int* map_S = (int*)malloc(sizeof(int) * max_multi); // Multiple sources
+    bool* nodeDone = (bool*)calloc(v_size, sizeof(bool));
+
+    size_t multi_size = v_size * max_multi;
+
+    int* s_size = (int*)malloc(sizeof(int) * v_size);
+    float* dist_MULTI = (float*)malloc(sizeof(float) * multi_size);
+    float* sigma_MULTI = (float*)malloc(sizeof(float) * multi_size);
+    float* delta_MULTI = (float*)malloc(sizeof(float) * multi_size);
+
+    Q_struct** s = (Q_struct**)malloc(v_size * sizeof(Q_struct*));
+    Q_struct* f1 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
+    Q_struct* f2 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
+
+    // Pre-initialize dist_MULTI to INFINITE
+    float* dist_INIT = (float*)malloc(sizeof(float) * multi_size);
+    
+    for (size_t i = 0; i < multi_size; i++) {
+        dist_INIT[i] = INFINITE;
+    }
+    // showCSR(csr);
+    //D1 Folding
+    D1Folding(csr);
+    // for(int i=0;i<csr->csrVSize;i++){
+    //     std::cout<<"_csr->representNode["<<i<<"]: "<<csr->representNode[i]<<"\t_csr->ff["<<i<<"]: "<<csr->ff[i]<<endl;
+    // }
+
+    // showCSR(csr);
+    //標記那些node是AP
+    AP_detection(csr);
+    //做3case的分割
+    AP_Copy_And_Split_BC(csr);
+
+    // struct newID_info* newID_infos = rebuildGraph(csr);
+    // for(int i=0;i< csr->ap_count;i++){
+    //     cout<<csr->AP_List[i]<<" ";
+    // }
+    // cout<<"csr.ap_count: "<<csr->ap_count<<"\n";
+    // multi_time_end = seconds();
+    // multi_total_time = (multi_time_end - multi_time_start);
+
+    // Free memory
+    free(s_size);
+    free(dist_MULTI);
+    free(sigma_MULTI);
+    free(delta_MULTI);
+    free(map_S);
+    free(nodeDone);
+    free(s);
+    free(f1);
+    free(f2);
+    free(dist_INIT);
+}
+
+
+//************************************************ */
+//                   循序_brandes 測試
+//************************************************ */
+
+void brandes_with_predecessors(CSR& csr, int V, float* BC) {
+    // Allocate memory for BFS data structures
+    vector<vector<int>> S(V);               // S is a 2D stack
+    vector<int> sigma(V, 0);               // Sigma array
+    vector<int> dist(V, -1);               // Distance array
+    vector<float> delta(V, 0.0);           // Delta array
+    vector<int> S_size(V, 0);              // Stack size for each level
+    queue<int> f1, f2;                     // Current and Next frontier
+    vector<vector<int>> predecessors(V);   // Predecessor list
+
+    long long total_predecessor_count = 0; // To accumulate total predecessors
+
+    for (int s = csr.startNodeID; s <= csr.endNodeID; ++s) {
+
+        // Initialize arrays for each source node
+        fill(sigma.begin(), sigma.end(), 0);
+        fill(dist.begin(), dist.end(), -1);
+        fill(delta.begin(), delta.end(), 0.0);
+        for (auto& level : S) {
+            level.clear();
+        }
+        for (auto& preds : predecessors) {
+            preds.clear();
+        }
+
+        sigma[s] = 1;
+        dist[s] = 0;
+        f1.push(s);
+
+        int level = 0;
+
+        // BFS forward phase
+        while (!f1.empty()) {
+            while (!f1.empty()) {
+                int u = f1.front();
+                f1.pop();
+                S[level].push_back(u);
+
+                // Traverse neighbors in CSR
+                for (int i = csr.csrV[u]; i < csr.csrV[u + 1]; ++i) {
+                    int w = csr.csrE[i];
+
+                    if (dist[w] < 0) {
+                        dist[w] = dist[u] + 1;
+                        f2.push(w);
+                    }
+
+                    if (dist[w] == dist[u] + 1) {
+                        sigma[w] += sigma[u];
+                        predecessors[w].push_back(u);
+                    }
+                }
+            }
+            swap(f1, f2);
+            level++;
+        }
+
+        // Backward phase
+        for (int d = level - 1; d >= 0; --d) {
+            for (int w : S[d]) {
+                for (int v : predecessors[w]) {
+                    delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
+                }
+                if (w != s) {
+                    BC[w] += delta[w];
+                }
+            }
+        }
+
+        // Accumulate total predecessors
+        for (const auto& preds : predecessors) {
+            total_predecessor_count += preds.size();
+        }
+    }
+    // for(int i=csr.startNodeID;i<= csr.endNodeID; i++){
+    //     printf("BC_ans[%d]: %0.2f\n",i,BC[i]);
+    // }
+    // Calculate and print average predecessors
+    // double average_predecessors = (double)total_predecessor_count / V; //每個點當source時平均的pred edge數量。
+    // cout << "avg  pred: " << average_predecessors << endl;
+    // cout << "edge size: " << csr.csrESize << endl;
+    // cout << "\n---------------------\n" << endl;
+    // cout << "percentag edge: " << (float)average_predecessors / csr.csrESize *100<< endl; //pred edge/比例。
+    // cout << "percentag node: " << (float)csr.csrVSize / csr.csrESize *100<< endl;
+    // cout << "avg pred edge of node: " << (float)csr.csrESize / average_predecessors << endl;
+    // cout << "avg edge of node: " << (float)csr.csrESize / csr.csrVSize << endl;
+    // cout << "\n---------------------\n" << endl;
+}
+
+void computeCC_ans(struct CSR* _csr, int* _CCs){
+    // showCSR(_csr);
+    int* dist_arr       = (int*)calloc(sizeof(int), _csr->csrVSize);
+
+    struct qQueue* Q    = InitqQueue();
+    qInitResize(Q, _csr->csrVSize);
+
+    int sourceID;
+
+    #ifdef CheckDistAns
+    sourceID = tempSourceID;
+    int CC_ans = 0;
+    #else
+    sourceID = _csr->startNodeID;
+    // sourceID = 1;
+    #endif
+
+    for(; sourceID <= _csr->endNodeID ; sourceID ++){
+        memset(dist_arr, -1, sizeof(int) * _csr->csrVSize);
+        resetQueue(Q);
+
+        qPushBack(Q, sourceID);
+        dist_arr[sourceID]  = 0;
+
+        // #ifdef DEBUG
+        // printf("\nSourceID = %2d ...\n", sourceID);
+        // #endif      
+
+        int currentNodeID   = -1;
+        int neighborNodeID  = -1;
+
+
+        while(!qIsEmpty(Q)){
+            currentNodeID = qPopFront(Q);
+            
+            // #ifdef DEBUG
+            // printf("%2d ===\n", currentNodeID);
+            // #endif
+
+            for(int neighborIndex = _csr->csrV[currentNodeID] ; neighborIndex < _csr->oriCsrV[currentNodeID + 1] ; neighborIndex ++){
+                neighborNodeID = _csr->csrE[neighborIndex];
+
+                // #ifdef DEBUG
+                // printf("\t%2d meet %2d, dist_arr[%2d] = %2d\n", currentNodeID, neighborNodeID, neighborNodeID, dist_arr[neighborNodeID]);
+                // #endif
+
+                if(dist_arr[neighborNodeID] == -1){
+                    qPushBack(Q, neighborNodeID);
+                    dist_arr[neighborNodeID] = dist_arr[currentNodeID] + 1;
+
+                    // #ifdef DEBUG
+                    // printf("\tpush %2d to Q, dist_arr[%2d] = %2d\n", neighborNodeID, neighborNodeID, dist_arr[neighborNodeID]);
+                    // #endif
+                    
+                    #ifdef CheckDistAns
+                    CC_ans += dist_arr[neighborNodeID];
+                    #else
+                    _CCs[sourceID] += dist_arr[neighborNodeID];
+                    #endif
+
+                }
+            }
+        }
+        
+        // break;
+        #ifdef CheckDistAns
+        printf("CC[%d] = %d\n", tempSourceID, CC_ans);
+        break;
+        #endif
+        
+    }
+
+    free(Q->dataArr);
+    free(Q);
+
+    #ifndef CheckDistAns
+    free(dist_arr);
+    #endif
+
+    return;
+}
+
+
+//用來分析Vw U1 U2的分布
+void computeCC_shareBased_oneTraverse(struct CSR* _csr, int* _CCs){
+    // showCSR(_csr);
+    
+    int* dist_arr           = (int*)malloc(sizeof(int) * _csr->csrVSize);
+    int* neighbor_dist_ans  = (int*)malloc(sizeof(int) * _csr->csrVSize);
+
+    struct qQueue* Q        = InitqQueue();
+    qInitResize(Q, _csr->csrVSize);
+
+    //record that nodes which haven't been source yet
+    int* nodeDone = (int*)calloc(sizeof(int), _csr->csrVSize);
+    
+    long long Vw_count=0,U1_count=0,U2_count=0; //計算VW數量
+    long long margin_count=0;
+    long long shared_source_count=0;
+    long long update_pred_degree=0;
+    //record nodes belongs to which neighbor of source
+    int* mapping_SI                 = (int*)malloc(sizeof(int) * 32);
+    unsigned int* sharedBitIndex    = (unsigned int*)calloc(sizeof(unsigned int), _csr->csrVSize); //for recording blue edge bitIndex
+    unsigned int* relation          = (unsigned int*)calloc(sizeof(unsigned int), _csr->csrVSize); //for recording red edge bitIndex
+    
+    //order ID by degree
+    _csr->orderedCsrV  = (int*)calloc(sizeof(int), (_csr->csrVSize) *2);
+    for(int i=_csr->startNodeID;i<=_csr->endNodeID;i++){
+            _csr->orderedCsrV[i]=i;
+    }
+    quicksort_nodeID_with_degree(_csr->orderedCsrV, _csr->csrNodesDegree, _csr->startNodeID, _csr->endNodeID);
+
+    for(int sourceID = _csr->startNodeID ; sourceID <= _csr->endNodeID ; sourceID ++){
+    // for(int sourceIDIndex = _csr->startNodeID ; sourceIDIndex <= _csr->startNodeID ; sourceIDIndex ++){
+    //     int sourceID = _csr->orderedCsrV[sourceIDIndex];
+        if(nodeDone[sourceID] == 1){
+            continue;
+        }
+        nodeDone[sourceID] = 1;
+
+        // printf("SourceID = %2d\n", sourceID);
+
+        memset(dist_arr, -1, sizeof(int) * _csr->csrVSize);
+        
+        resetQueue(Q);
+        
+        dist_arr[sourceID] = 0;
+        qPushBack(Q, sourceID);
+
+        int currentNodeID  = -1;
+        int neighborNodeID = -1;
+        int neighborIndex  = -1;
+        
+        //each neighbor of sourceID mapping to bit_SI, if it haven't been source yet
+        int mappingCount = 0;
+        for(neighborIndex = _csr->csrV[sourceID] ; neighborIndex < _csr->csrV[sourceID + 1] ; neighborIndex ++){
+            neighborNodeID = _csr->csrE[neighborIndex];
+
+            if(nodeDone[neighborNodeID] == 0){
+                shared_source_count++;
+                sharedBitIndex[neighborNodeID] = 1 << mappingCount;
+                mapping_SI[mappingCount] = neighborNodeID;
+
+                // printf("sharedBitIndex[%6d] = %8x,\tmapping_SI[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], mappingCount, mapping_SI[mappingCount]);
+                #ifdef DEBUG
+                printf("sharedBitIndex[%2d] = %8x,\tmapping_SI[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], mappingCount, mapping_SI[mappingCount]);
+                #endif
+                
+                mappingCount ++;
+
+                //Record to 32 bit only
+                if(mappingCount == 1){
+                    break;
+                }
+
+            }
+        }
+        
+        // if(mappingCount < 3){
+        //     //把sharedBitIndex重設。
+        //     for(int mappingIndex = 0 ; mappingIndex < mappingCount ; mappingIndex ++){
+        //         int nodeID = mapping_SI[mappingIndex];
+        //         sharedBitIndex[nodeID] = 0;
+        //     }
+        //     memset(mapping_SI, 0, sizeof(int) * 32);
+
+        //     #pragma region Ordinary_BFS_Forward_Traverse
+
+        //     #ifdef DEBUG
+        //     printf("\n####      Source %2d Ordinary BFS Traverse      ####\n\n", sourceID);
+        //     #endif
+
+        //     while(!qIsEmpty(Q)){
+        //         currentNodeID = qPopFront(Q);
+
+        //         #ifdef DEBUG
+        //         printf("\tcurrentNodeID = %2d ... dist = %2d\n", currentNodeID, dist_arr[currentNodeID]);
+        //         #endif
+
+        //         for(neighborIndex = _csr->csrV[currentNodeID] ; neighborIndex < _csr->csrV[currentNodeID + 1] ; neighborIndex ++){
+        //             neighborNodeID = _csr->csrE[neighborIndex];
+
+        //             if(dist_arr[neighborNodeID] == -1){
+        //                 qPushBack(Q, neighborNodeID);
+        //                 dist_arr[neighborNodeID] = dist_arr[currentNodeID] + 1;
+
+        //                 #ifdef DEBUG
+        //                 printf("\t\t[1]dist[%2d] = %2d\n", neighborNodeID, dist_arr[neighborNodeID]);
+        //                 #endif
+        //             }
+        //         }
+        //     }
+        //     #pragma endregion //Ordinary_BFS_Forward_Traverse
+
+
+
+        //     #pragma region distAccumulation_pushBased
+        //     //Update CC in the way of pushing is better for parallelism because of the it will not need to wait atomic operation on single address,
+        //     //it can update all value in each CC address in O(1) time.
+        //     for(int nodeID = _csr->startNodeID ; nodeID <= _csr->endNodeID ; nodeID ++){
+        //         _CCs[nodeID] += dist_arr[nodeID];
+        //     }
+        //     #pragma endregion //distAccumulation_pushBased
+
+
+
+        //     #pragma region checkingDistAns
+        //     #ifdef CheckDistAns
+        //     // CC_CheckDistAns(_csr, _CCs, sourceID, dist_arr);
+        //     #endif
+
+        //     #ifdef CheckCC_Ans
+        //     dynamic_CC_trace_Ans(_csr, _CCs, sourceID);
+        //     #endif
+
+        //     #pragma endregion //checkingDistAns
+
+        // }
+        // else{
+
+            #pragma region SourceTraverse
+            //main source traversal : for getting the dist of each node from source
+            // #ifdef DEBUG
+            // printf("\n####      Source %2d First traverse...      ####\n\n", sourceID);
+            // #endif
+
+            while(!qIsEmpty(Q)){
+                currentNodeID = qPopFront(Q);
+
+                #ifdef DEBUG
+                printf("currentNodeID = %2d ... dist = %2d\n", currentNodeID, dist_arr[currentNodeID]);
+                #endif
+
+                
+
+                for(neighborIndex = _csr->csrV[currentNodeID] ; neighborIndex < _csr->csrV[currentNodeID + 1] ; neighborIndex ++){
+                    neighborNodeID = _csr->csrE[neighborIndex];
+
+                    if(dist_arr[neighborNodeID] == -1){//traverse new succesor and record its SI
+                        qPushBack(Q, neighborNodeID);
+                        dist_arr[neighborNodeID] = dist_arr[currentNodeID] + 1;
+                        sharedBitIndex[neighborNodeID] |= sharedBitIndex[currentNodeID];
+
+                        #ifdef DEBUG
+                        printf("\t[1]unvisited_SI[%2d] => %2x, dist[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], neighborNodeID, dist_arr[neighborNodeID]);
+                        #endif
+                        
+                        // if(sourceID == 5 && (neighborNodeID == 4 || neighborNodeID == 6)){
+                        //     printf("\t[1]currentNodeID = %2d(dist %2d, SI %2x), neighborNodeID = %d(dist %2d, SI %2x)\n", currentNodeID, dist_arr[currentNodeID], sharedBitIndex[currentNodeID], neighborNodeID, dist_arr[neighborNodeID], sharedBitIndex[neighborNodeID]);
+                        // }
+                    }
+                    else if(dist_arr[neighborNodeID] == dist_arr[currentNodeID] + 1){ //traverse to discovered succesor and record its SI
+                        sharedBitIndex[neighborNodeID] |= sharedBitIndex[currentNodeID];    
+                        
+                        #ifdef DEBUG
+                        printf("\t[2]visited_SI[%2d] => %2x, dist[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], neighborNodeID, dist_arr[neighborNodeID]);
+                        #endif
+
+                        // if(sourceID == 5 && (neighborNodeID == 4 || neighborNodeID == 6)){
+                        //     printf("\t[2]currentNodeID = %2d(dist %2d, SI %2x), neighborNodeID = %d(dist %2d, SI %2x)\n", currentNodeID, dist_arr[currentNodeID], sharedBitIndex[currentNodeID], neighborNodeID, dist_arr[neighborNodeID], sharedBitIndex[neighborNodeID]);
+                        // }
+                    }
+                    else if(dist_arr[neighborNodeID] == dist_arr[currentNodeID] && currentNodeID < neighborNodeID){ //traverse to discovered neighbor which is at same level as currentNodeID
+                        relation[currentNodeID]     |= sharedBitIndex[neighborNodeID] & (~sharedBitIndex[currentNodeID]);
+                        relation[neighborNodeID]    |= sharedBitIndex[currentNodeID]  & (~sharedBitIndex[neighborNodeID]);
+
+                        #ifdef DEBUG
+                        printf("\t[3]Red edge found(%2d, %2d), ", currentNodeID, neighborNodeID);
+                        printf("relation[%2d] = %2x, relation[%2d] = %2x\n", currentNodeID, relation[currentNodeID], neighborNodeID, relation[neighborNodeID]);
+                        #endif
+
+                        // if(sourceID == 5 && (neighborNodeID == 4 || neighborNodeID == 6)){
+                        //     printf("\t[3]currentNodeID = %2d(dist %2d, re %2x), neighborNodeID = %d(dist %2d, re %2x)\n", currentNodeID, dist_arr[currentNodeID], relation[currentNodeID], neighborNodeID, dist_arr[neighborNodeID], relation[neighborNodeID]);
+                        // }
+                    }//&& relation[neighborNodeID]
+                    else if(dist_arr[neighborNodeID] == dist_arr[currentNodeID] - 1){ //traverse to discovered neighbor which is at same level as currentNodeID
+                        // relation[currentNodeID]     |= relation[neighborNodeID];
+                        //這一步是讓SI 跟R只會顯示一個 SI:1 R:0 幫助最終判鄰居是否相同
+                        relation[currentNodeID]     = (relation[currentNodeID]|relation[neighborNodeID]) & (~sharedBitIndex[currentNodeID] );
+                        #ifdef DEBUG
+                        printf("\t[3]Red edge found(%2d, %2d), ", currentNodeID, neighborNodeID);
+                        printf("relation[%2d] = %2x, relation[%2d] = %2x\n", currentNodeID, relation[currentNodeID], neighborNodeID, relation[neighborNodeID]);
+                        #endif
+
+                        // if(sourceID == 5 && (neighborNodeID == 4 || neighborNodeID == 6)){
+                        //     printf("\t[3]currentNodeID = %2d(dist %2d, re %2x), neighborNodeID = %d(dist %2d, re %2x)\n", currentNodeID, dist_arr[currentNodeID], relation[currentNodeID], neighborNodeID, dist_arr[neighborNodeID], relation[neighborNodeID]);
+                        // }
+                    }
+                }
+            }
+
+            //second source traversal : for handle the red edge
+            // #ifdef DEBUG
+            // printf("\n####      Source %2d Second traverse...      ####\n\n", sourceID);
+            // #endif
+
+            // Q->front = 0;
+            // while(!qIsEmpty(Q)){
+            //     currentNodeID = qPopFront(Q);
+
+            //     #ifdef DEBUG
+            //     printf("currentNodeID = %2d ... dist = %2d ... relation = %x\n", currentNodeID, dist_arr[currentNodeID], relation[currentNodeID]);
+            //     #endif
+
+            //     for(neighborIndex = _csr->csrV[currentNodeID] ; neighborIndex < _csr->csrV[currentNodeID + 1] ; neighborIndex ++){
+            //         neighborNodeID = _csr->csrE[neighborIndex];
+
+            //         if(dist_arr[neighborNodeID] == dist_arr[currentNodeID] + 1){
+            //             relation[neighborNodeID] |= relation[currentNodeID];
+                        
+            //             #ifdef DEBUG
+            //             printf("\t[4]relation[%2d] = %2x\n", neighborNodeID, relation[neighborNodeID]);
+            //             #endif
+
+            //             // if(sourceID == 5 && (neighborNodeID == 4 || neighborNodeID == 6)){
+            //             //     printf("\t[4]currentNodeID = %2d(dist %2d, re %2x), neighborNodeID = %d(dist %2d, re %2x)\n", currentNodeID, dist_arr[currentNodeID], relation[currentNodeID], neighborNodeID, dist_arr[neighborNodeID], relation[neighborNodeID]);
+            //             // }
+            //         }
+            //     }
+            // }
+            #pragma endregion //SourceTraverse
+
+            #pragma region sourceDistAccumulation_pushBased
+            for(int nodeID = _csr->startNodeID ; nodeID <= _csr->endNodeID ; nodeID ++){
+                _CCs[nodeID] += dist_arr[nodeID];
+            }
+
+            #ifdef CheckCC_Ans
+            dynamic_CC_trace_Ans(_csr, _CCs, sourceID);
+            #endif
+
+            #pragma endregion //distAccumulation_pushBased
+
+
+            #pragma region neighborOfSource_GetDist
+            //recover the data from source to neighbor of source
+            for(int sourceNeighborIndex = 0 ; sourceNeighborIndex < mappingCount ; sourceNeighborIndex ++){
+                memset(neighbor_dist_ans, 0, sizeof(int));
+
+                int sourceNeighborID = mapping_SI[sourceNeighborIndex];
+                unsigned int bit_SI = 1 << sourceNeighborIndex;
+
+                nodeDone[sourceNeighborID] = 1;
+
+                #ifdef DEBUG
+                printf("\nnextBFS = %2d, bit_SI = %x\n", sourceNeighborID, bit_SI);
+                #endif
+
+                for(int nodeID = _csr->startNodeID ; nodeID <= _csr->endNodeID ; nodeID ++){
+                    int nodeID_type=-1; //1: Vw -- 2:U1 -- 3:U2 
+                    if((sharedBitIndex[nodeID] & bit_SI) > 0){ //要括號，因為"比大小優先於邏輯運算"
+                        neighbor_dist_ans[nodeID] = dist_arr[nodeID] - 1;
+                        Vw_count++;
+                        nodeID_type=1;
+                        // printf("\t[5]neighbor_dist_ans[%2d] = %2d, SI[%2d] = %x\n", nodeID, neighbor_dist_ans[nodeID], nodeID, sharedBitIndex[nodeID]);
+                    }
+                    else{
+                        neighbor_dist_ans[nodeID] = dist_arr[nodeID] + 1;
+                        // printf("\t[6]neighbor_dist_ans[%2d] = %2d, SI[%2d] = %x\n", nodeID, neighbor_dist_ans[nodeID], nodeID, sharedBitIndex[nodeID]);
+                        if((relation[nodeID] & bit_SI) > 0){
+                            U1_count++;
+                            neighbor_dist_ans[nodeID] --;
+                            nodeID_type=2;
+                            // printf("\t[7]neighbor_dist_ans[%2d] = %2d, relation[%2d] = %x\n", nodeID, neighbor_dist_ans[nodeID], nodeID, relation[nodeID]);
+                        }else{
+                            nodeID_type=3;
+                            U2_count++;
+                        }
+                    }
+
+                    for(neighborIndex = _csr->csrV[nodeID] ; neighborIndex < _csr->csrV[nodeID + 1] ; neighborIndex ++){
+                        neighborNodeID = _csr->csrE[neighborIndex];
+                        int neighborID_type=-1;
+                        if((sharedBitIndex[neighborNodeID] & bit_SI) > 0){ //要括號，因為"比大小優先於邏輯運算"
+                            neighborID_type=1;
+                            // printf("\t[5]neighbor_dist_ans[%2d] = %2d, SI[%2d] = %x\n", nodeID, neighbor_dist_ans[nodeID], nodeID, sharedBitIndex[nodeID]);
+                        }
+                        else{
+                            // printf("\t[6]neighbor_dist_ans[%2d] = %2d, SI[%2d] = %x\n", nodeID, neighbor_dist_ans[nodeID], nodeID, sharedBitIndex[nodeID]);
+                            if((relation[nodeID] & bit_SI) > 0){
+                                neighborID_type=2;
+                                // printf("\t[7]neighbor_dist_ans[%2d] = %2d, relation[%2d] = %x\n", nodeID, neighbor_dist_ans[nodeID], nodeID, relation[nodeID]);
+                            }else{
+                                neighborID_type=3;
+                            }
+                        }
+                        if(nodeID_type!=neighborID_type){
+                            update_pred_degree += _csr->csrNodesDegree[nodeID];
+                            margin_count++;
+                            break;
+                        }
+                    }
+                }
+
+                #pragma region neighborDistAccumulation_pushBased
+                for(int nodeID = _csr->startNodeID ; nodeID <= _csr->endNodeID ; nodeID ++){
+                    _CCs[nodeID] += neighbor_dist_ans[nodeID];
+                }
+                #pragma endregion //neighborDistAccumulation_pushBased
+
+            }
+
+
+            
+            #pragma endregion //neighborOfSource_GetDist
+
+            //reset the SI & relation arrays
+            memset(relation, 0, sizeof(unsigned int) * _csr->csrVSize);
+            memset(sharedBitIndex, 0, sizeof(unsigned int) * _csr->csrVSize);
+        // }
+    }
+    float avg_margin_node = margin_count/shared_source_count;
+    float avg_pred_update_degree = update_pred_degree/shared_source_count;
+    float avg_pred_update_degree_ratio = avg_pred_update_degree/_csr->csrESize;
+
+    float avg_Vw_node = Vw_count/shared_source_count;
+    float avg_U1_node = U1_count/shared_source_count;
+    float avg_U2_node = U2_count/shared_source_count;
+    // cout<<"avg_margin_node: "<<avg_margin_node<<" marg_node_ratio: "<<avg_margin_node/_csr->csrVSize*100<<endl;
+    // cout<<"avg_marg_edge% : "<<avg_pred_update_degree<<" marg_edge_ratio: "<<avg_pred_update_degree_ratio*100<<endl;
+    // cout<<"avg_Vw_node:     "<<avg_Vw_node<<" Vw_node_ratio: "<<avg_Vw_node/_csr->csrVSize*100<<endl;
+    // cout<<"avg_U1_node:     "<<avg_U1_node<<" U1_node_ratio: "<<avg_U1_node/_csr->csrVSize*100<<endl;
+    // cout<<"avg_U2_node:     "<<avg_U2_node<<" U2_node_ratio: "<<avg_U2_node/_csr->csrVSize*100<<endl;
+
+    // printf("\n\n[CC_sharedBased] Done!\n");
+}
+
+//使用shared 和successor來BC (循序版本，平行模板)
+void computeBC_shareBased_Successor_MS( CSR* _csr, float* _BCs){
+    // showCSR(_csr);
+    int V =  _csr->csrVSize;
+
+    struct qQueue* Q        = InitqQueue();
+    qInitResize(Q, _csr->csrVSize);
+
+    //record that nodes which haven't been source yet
+    int* nodeDone = (int*)calloc(sizeof(int), _csr->csrVSize);
+    
+    //record nodes belongs to which neighbor of source
+    int  mappingCount_max           = 32; //最大可以設64
+    int* mapping_SI                 = (int*)malloc(sizeof(int) * 32);
+    vector<unsigned int> sharedBitIndex(_csr->csrVSize, 0); // for recording blue edge bitIndex
+    vector<unsigned int> relation(_csr->csrVSize, 0);       // for recording red edge bitIndex
+    vector<unsigned long long> sameIndex(_csr->csrVSize, 0);// for recording blue edge BC_sameIndex
+
+    // Allocate memory for BFS data structures
+    vector<vector<int>> S(V);              // S is a 2D stack
+    vector<int> sigma(V, 0);               // Sigma array
+    vector<int> dist(V, -1);               // Distance array
+    vector<float> delta(V, 0.0);           // Delta array
+    vector<vector<int>> Successors(V);     // Successors list 
+
+    //可重複使用的空間
+    vector<int> S_size(V, 0);              // Stack size for each level
+    queue<int> f1, f2;                     // Current and Next frontier
+    queue<Q_struct>  Q_f1,Q_f2;
+    vector<Q_struct> Q_f2_temp(V);
+    //N(s)鄰居的traverse 路徑數量、距離、Suc、Sigma
+    vector<vector<int>>   Ns_dist  (mappingCount_max, vector<int>(V,-1));               // Distance array
+    vector<vector<int>>   Ns_sigma (mappingCount_max, vector<int>(V,0));
+    vector<vector<float>> Ns_delta (mappingCount_max, vector<float>(V,0.0));            // Delta array
+    vector<vector<vector<int>>> Ns_Successors(mappingCount_max,vector<vector<int>>(V)); // Successors [][][]: [source的Suc] [V] [V的Suc] 
+    vector<vector<Q_struct>> Ns_S(V);               // S is a 2D stack [level][node]...
+
+
+    //Suc與edge數據
+    unsigned long Suc_times=0;
+    unsigned long edge_times=0;
+    //用degree做排序 大->小
+    _csr->orderedCsrV  = (int*)calloc(sizeof(int), (_csr->csrVSize) *2);
+    for(int i=_csr->startNodeID;i<=_csr->endNodeID;i++){
+            _csr->orderedCsrV[i]=i;
+    }
+    quicksort_nodeID_with_degree(_csr->orderedCsrV, _csr->csrNodesDegree, _csr->startNodeID, _csr->endNodeID);
+
+    // for(int sourceID = _csr->startNodeID ; sourceID <= _csr->endNodeID ; sourceID ++){
+    
+
+
+    for(int sourceIDIndex = _csr->startNodeID ; sourceIDIndex <= _csr->endNodeID ; sourceIDIndex ++){
+        int sourceID = _csr->orderedCsrV[sourceIDIndex];
+        if(nodeDone[sourceID] == 1){
+            continue;
+        }
+        nodeDone[sourceID] = 1;
+
+        // printf("SourceID = %2d\n", sourceID);
+
+        int currentNodeID  = -1;
+        int neighborNodeID = -1;
+        int neighborIndex  = -1;
+        
+        //each neighbor of sourceID mapping to bit_SI, if it haven't been source yet
+        //挑選鄰居
+        int mappingCount = 0;
+        for(neighborIndex = _csr->csrV[sourceID] ; neighborIndex < _csr->csrV[sourceID + 1] ; neighborIndex ++){
+            neighborNodeID = _csr->csrE[neighborIndex];
+
+            if(nodeDone[neighborNodeID] == 0){
+                //Record to 32 bit only
+                if(mappingCount == mappingCount_max){
+                    break;
+                }
+
+                sharedBitIndex[neighborNodeID] = 1 << mappingCount;
+                mapping_SI[mappingCount] = neighborNodeID;
+                nodeDone[neighborNodeID] = 1;
+
+                // printf("sharedBitIndex[%6d] = %8x,\tmapping_SI[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], mappingCount, mapping_SI[mappingCount]);
+                #ifdef DEBUG
+                printf("sharedBitIndex[%2d] = %8x,\tmapping_SI[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], mappingCount, mapping_SI[mappingCount]);
+                #endif
+                
+                mappingCount ++;
+            }
+        }
+
+        //**********************************/
+        //   Source forward traverse
+        //**********************************/
+        #pragma region SourceTraverse //forward traverse
+        
+        // Initialize arrays for each source node
+        sigma.assign(V, 0);   // Reset sigma to size V with all values 0
+        dist.assign(V, -1);   // Reset dist to size V with all values -1
+        delta.assign(V, 0.0); // Reset delta to size V with all values 0.0
+
+        for (auto& level : S) {
+            level.clear();
+        }
+        for (auto& Suc : Successors) {
+            Suc.clear();
+        }
+
+        sigma[sourceID] = 1;
+        dist[sourceID] = 0;
+        f1.push(sourceID);
+        int level = 0;
+        // cout<<"source ID: "<<sourceID<<endl;
+        // BFS forward phase
+        
+        while (!f1.empty()){
+            while (!f1.empty()) {
+                int currentNodeID = f1.front();
+                f1.pop();
+                S[level].push_back(currentNodeID);
+                #ifdef DEBUG
+                printf("currentNodeID = %2d ... dist = %2d\n", currentNodeID, dist[currentNodeID]);
+                #endif
+                // Traverse neighbors in CSR
+                for(neighborIndex = _csr->csrV[currentNodeID] ; neighborIndex < _csr->csrV[currentNodeID + 1] ; neighborIndex ++) {
+                    int neighborNodeID =  _csr->csrE[neighborIndex];
+
+                    if (dist[neighborNodeID] == -1) {
+                        dist[neighborNodeID] = dist[currentNodeID] + 1;
+                        sigma[neighborNodeID] += sigma[currentNodeID];
+                        sharedBitIndex[neighborNodeID] |= sharedBitIndex[currentNodeID];
+                        Successors[currentNodeID].push_back(neighborNodeID);
+                        f2.push(neighborNodeID);
+                        #ifdef DEBUG
+                        printf("\t[1]unvisited_SI[%2d] => %2x, dist[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], neighborNodeID, dist[neighborNodeID]);
+                        #endif
+                    }
+                    else if (dist[neighborNodeID] == dist[currentNodeID] + 1) {
+                        sharedBitIndex[neighborNodeID] |= sharedBitIndex[currentNodeID];
+                        Successors[currentNodeID].push_back(neighborNodeID);
+                        sigma[neighborNodeID] += sigma[currentNodeID];
+                        #ifdef DEBUG
+                        printf("\t[2]unvisited_SI[%2d] => %2x, dist[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], neighborNodeID, dist[neighborNodeID]);
+                        #endif
+                    }
+                    else if(dist[neighborNodeID] == dist[currentNodeID] && currentNodeID < neighborNodeID){ //traverse to discovered neighbor which is at same level as currentNodeID
+                        relation[currentNodeID]     |= sharedBitIndex[neighborNodeID] & (~sharedBitIndex[currentNodeID]);
+                        relation[neighborNodeID]    |= sharedBitIndex[currentNodeID]  & (~sharedBitIndex[neighborNodeID]);
+                        #ifdef DEBUG
+                        printf("\t[3]Red edge found(%2d, %2d), ", currentNodeID, neighborNodeID);
+                        printf("relation[%2d] = %2x, relation[%2d] = %2x\n", currentNodeID, relation[currentNodeID], neighborNodeID, relation[neighborNodeID]);
+                        #endif
+
+                    }//&& relation[neighborNodeID]
+                    else if(dist[neighborNodeID] == dist[currentNodeID] - 1){
+                        //這一步是讓SI 跟R只會顯示一個 SI:1 R:0 幫助最終判鄰居是否相同 
+                        relation[currentNodeID]     = (relation[currentNodeID]|relation[neighborNodeID]) & (~sharedBitIndex[currentNodeID] );
+                        #ifdef DEBUG
+                        printf("\t[4]Red edge found(%2d, %2d), ", currentNodeID, neighborNodeID);
+                        printf("relation[%2d] = %2x, relation[%2d] = %2x\n", currentNodeID, relation[currentNodeID], neighborNodeID, relation[neighborNodeID]);
+                        #endif
+                    }
+                }
+
+            }
+            swap(f1, f2);
+            level++;
+        }
+
+
+
+        #ifdef DEBUG
+            //printf successor
+            printf("\n");
+            for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+                printf("Successor(%d) sigma(%d) ",i,sigma[i] );
+                for (int j=0;j<Successors[i].size();j++){
+                    printf("%d ",Successors[i][j]);
+                }
+                printf("\n");
+            }
+
+            for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+                printf("%d: SI(%d) R(%d)\n",i,sharedBitIndex[i],relation[i] );
+            }
+        #endif
+
+        #pragma endregion
+        //**********************************/
+        //   Source backward traverse
+        //**********************************/
+        #pragma region sourceDistAccumulation_pushBased
+            // Backward phase
+            // for (int d = level - 1; d > 0; --d) {
+            //     for (int w : S[d]) {
+            //         for (int v : Successors[w]) {
+            //             delta[w] += (sigma[w] / (float)sigma[v]) * (1.0 + delta[v]);
+            //         }
+            //         _BCs[w] += delta[w];
+            //     }
+            // }
+            for (int d = level - 1; d >= 0; --d) {
+                for (int node : S[d]) { 
+                    for(neighborIndex = _csr->csrV[node] ; neighborIndex < _csr->csrV[node + 1] ; neighborIndex ++) {
+                        int neighborNodeID =  _csr->csrE[neighborIndex];
+
+                        //1:代表我有不一樣的鄰居(edge)  0:代表node的鄰居都是一樣的顏色(Suc)
+                        sameIndex[node] |= (sharedBitIndex[node]^sharedBitIndex[neighborNodeID])|(relation[node]^relation[neighborNodeID]);
+                        
+                        //normal backward
+                        if(dist[neighborNodeID] == dist[node] + 1 )
+                            delta[node] += (sigma[node] / (float)sigma[neighborNodeID]) * (1.0 + delta[neighborNodeID]);
+                        
+                    }
+                    ///normal BC accumulation
+                    if (node != sourceID) {
+                        // printf("delta[%d]: (%.2f)\n",node,delta[node]);
+                        _BCs[node] += delta[node];
+                    }
+                }
+            }
+        #pragma endregion //distAccumulation_pushBased
+        
+        // for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+        //     printf("_BC_first[%d]: (%.2f)\n",i,_BCs[i]);
+        // }
+        
+        #ifdef DEBUG //print SI、R、sameIndex
+            for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+                printf("_BC[%d]: (%.2f)\n",i,_BCs[i]);
+            }
+            for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+                printf(" sameIndex[%d]: ",i);
+                printbinary(sameIndex[i],mappingCount);
+                printf("\tSI[%d]: ",i);
+                printbinary(sharedBitIndex[i],mappingCount);
+                printf("\t R[%d]: ",i);
+                printbinary(relation[i],mappingCount);
+            }
+        #endif
+
+        //****************************************/
+        //   N(s) forward traverse(鄰居當Source)
+        //****************************************/
+        //初始Ns的資訊
+        if(mappingCount){
+            Ns_sigma.assign(mappingCount, vector<int>(V, 0));  // Reset Ns_sigma with zeros
+            Ns_dist.assign(mappingCount, vector<int>(V, -1));  // Reset Ns_dist with -1 (unvisited)
+            Ns_delta.assign(mappingCount, vector<float>(V, 0.0)); // Reset Ns_delta with 0.0
+            Ns_Successors.assign(mappingCount, vector<vector<int>>(V)); // Clear and reset Ns_Successors
+            Q_f2_temp.assign(V, Q_struct{0, -1}); // Reset Q_f2_temp using assign
+            Ns_S.assign(V, vector<Q_struct>());  // Reset Ns_S with empty vectors
+        }
+        
+
+        //這部分使用 multi-source實作
+        #pragma region third_part
+
+        // printf("---------initial Queue-----------\n");
+        for (int i = 0; i < mappingCount; i++) {
+            int sourceNode = mapping_SI[i];
+            Ns_sigma[i][sourceNode] = 1.0;
+            Ns_dist[i][sourceNode]  = 0;
+            Q_f1.push({(1ULL << i),sourceNode});
+
+            //printf
+            // printf("f1[%d]:[%d,",i,sourceNode);
+            // printbinary((1ULL << i),mappingCount);
+        }
+        // printf("----------------0-----------------\n");
+        
+        level=0;
+        // BFS forward phase
+        while (!Q_f1.empty()){
+            while (!Q_f1.empty()) {
+                int currentNodeID   = Q_f1.front().nodeID;
+                uint64_t traverse_S = Q_f1.front().traverse_S;
+                Ns_S[level].push_back(Q_f1.front());
+                Q_f1.pop();
+                //mapping
+                // Suc/edge neighbor
+                for (auto multi_node = 0; multi_node < mappingCount; multi_node++) {
+                    // uint64_t bit_mask=(1ULL << multi_node);
+                    if (traverse_S & (1ULL << multi_node)){ //該node在這層traverse到
+                        if( (sameIndex[currentNodeID] & (1ULL << multi_node)) == 0 ){ //Suc_traverse
+                            Suc_times++;
+                            // printf("[%d] Suc_traverse\n",  currentNodeID);
+                            for (auto SucNodeInDex = 0; SucNodeInDex < Successors[currentNodeID].size(); SucNodeInDex++) {
+                                int SucNodeID = Successors[currentNodeID][SucNodeInDex];
+
+                                Ns_dist [multi_node][SucNodeID]  = Ns_dist[multi_node][currentNodeID] +1;
+                                Ns_sigma[multi_node][SucNodeID] += Ns_sigma[multi_node][currentNodeID];
+                                Ns_Successors[multi_node][currentNodeID].push_back(SucNodeID);
+                                //push node into Q_f2_temp
+                                Q_f2_temp[SucNodeID].nodeID=SucNodeID;
+                                Q_f2_temp[SucNodeID].traverse_S|= (traverse_S & (1ULL << multi_node));
+                                // printf("[%d] push in Suc\n",  SucNodeID);
+                            }
+                        }else{//edge_traverse
+                            edge_times++;
+                            // printf("[%d] edge_traverse\n",  currentNodeID);
+                            for (auto neighborIndex = _csr->csrV[currentNodeID]; neighborIndex < _csr->csrV[currentNodeID + 1]; neighborIndex++) {
+                                int neighborNodeID = _csr->csrE[neighborIndex];
+                                //累加路徑數量、dist
+                                if (Ns_dist[multi_node][neighborNodeID] == -1) {
+                                    Ns_Successors[multi_node][currentNodeID].push_back(neighborNodeID);
+                                    
+                                    Ns_dist [multi_node][neighborNodeID]  = Ns_dist[multi_node][currentNodeID] + 1;
+                                    Ns_sigma[multi_node][neighborNodeID] += Ns_sigma[multi_node][currentNodeID];
+
+                                    // printf("[%d] push in edge\n",  neighborNodeID);
+                                    Q_f2_temp[neighborNodeID].nodeID=neighborNodeID;
+                                    Q_f2_temp[neighborNodeID].traverse_S|= (traverse_S & (1ULL << multi_node));
+                                }
+                                else if (Ns_dist[multi_node][neighborNodeID] == Ns_dist[multi_node][currentNodeID] + 1) {
+                                    Ns_Successors[multi_node][currentNodeID].push_back(neighborNodeID);
+                                    Ns_sigma[multi_node][neighborNodeID] += Ns_sigma[multi_node][currentNodeID];
+                                }
+                            }
+                        }
+
+                    }
+                }
+                
+            }
+            
+            //在這定義Q_f2_temp(vector)搜尋V個node，把對應index的node放進Q_f2
+            for(int insert_q = _csr->startNodeID ; insert_q <=_csr->endNodeID ; insert_q++ ){
+                if(Q_f2_temp[insert_q].nodeID!=-1){
+                    Q_f2.push(Q_f2_temp[insert_q]);
+                    //print DeBUG
+                    // printf("Q_f2[%d]:[%d,",insert_q, Q_f2_temp[insert_q].nodeID);
+                    // printbinary(Q_f2_temp[insert_q].traverse_S,mappingCount);
+                }
+            }
+            // printf("----------------%d----------------\n",(level+1));
+            
+            //做Q_f1(空的), Q_f2交換
+            swap(Q_f1, Q_f2);
+            Q_f2_temp.assign(V, Q_struct{0, -1}); // Reset Q_f2_temp using assign
+            level++;
+        }
+
+        //print Ns dist path Suc
+        // for(int i=_csr->startNodeID; i<=_csr->endNodeID;i++){
+        //     printf("dist{%d}: ",i);
+        //     for(int j=0; j<Ns_dist[i].size();j++){
+        //         printf("%d ",Ns_dist[i][j]);
+        //     }
+        //     printf("\n");
+        // }
+        
+        // for(int i=_csr->startNodeID; i<=_csr->endNodeID;i++){
+        //     printf("sigma{%d}: ",i);
+        //     for(int j=0; j<Ns_sigma[i].size();j++){
+        //         printf("%d ",Ns_sigma[i][j]);
+        //     }
+        //     printf("\n");
+        // }
+
+        // for(int i=0; i<mappingCount;i++){
+        //     printf("Successors{%d}: \n",mapping_SI[i]);
+        //     for(int j=_csr->startNodeID; j<=_csr->endNodeID;j++){
+        //         printf("{%d}: ",j);
+        //         for(auto& x:Ns_Successors[i][j]){
+        //             printf("%d ",x);
+        //         }
+        //         printf("\n");
+        //     }
+        //     printf("\n");
+        // }
+
+
+        #pragma endregion //neighborOfSource_GetDist
+
+        //****************************************/
+        //   N(s) backward traverse
+        //****************************************/
+        #pragma region forth_part
+        for (int d = level - 1; d > 0; --d) {
+            // printf("--------back level: %d------------\n",d);
+            for (auto node : Ns_S[d]) {
+                for(auto multi_node = 0; multi_node < mappingCount; multi_node++){
+                    uint64_t bit_mask = (1ULL<<multi_node);
+                    if(node.traverse_S & bit_mask){
+                        for (auto SucNodeInDex = 0; SucNodeInDex < Ns_Successors[multi_node][node.nodeID].size(); SucNodeInDex++) {
+                            int SucNodeID = Ns_Successors[multi_node][node.nodeID][SucNodeInDex];
+                            Ns_delta[multi_node][node.nodeID] += (Ns_sigma[multi_node][node.nodeID] / (float)Ns_sigma[multi_node][SucNodeID]) * (1.0 + Ns_delta[multi_node][SucNodeID]);
+                        }
+                        
+                        // if(node.nodeID != mapping_SI[multi_node]){
+                            // printf("Ns_delta[%d][%d]: (%.2f)\n",node.nodeID,mapping_SI[multi_node],Ns_delta[node.nodeID][multi_node]);
+                            _BCs[node.nodeID] += Ns_delta[multi_node][node.nodeID];
+                        // }
+                        
+                    }
+                }
+                
+            }
+        }
+
+       
+        #pragma endregion //neighborOfSource_GetDist
+
+        //reset the SI & relation arrays
+        relation.assign(_csr->csrVSize, 0);       // Reset relation to size _csr->csrVSize with all values 0
+        sharedBitIndex.assign(_csr->csrVSize, 0); // Reset sharedBitIndex to size _csr->csrVSize with all values 0
+        sameIndex.assign(_csr->csrVSize, 0);      // Reset sameIndex to size _csr->csrVSize with all values 0
+
+    }
+
+    unsigned long total_times=edge_times+Suc_times;
+    printf("suc  traverse: %0.2f\n", Suc_times/(float)total_times);
+    printf("edge traverse: %0.2f\n", edge_times/(float)total_times);
+    
+    // for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+    //     printf("_BC[%d]: (%.2f)\n",i,_BCs[i]);
+    // }
+
+    // printf("\n[BC_sharedBased] Done!\n");
+}
+
+//使用shared 和successor來BC (循序版本，Ns分別traverse)
+void computeBC_shareBased_Successor_SS( CSR* _csr, float* _BCs){
+    // showCSR(_csr);
+    int V =  _csr->csrVSize;
+
+    struct qQueue* Q        = InitqQueue();
+    qInitResize(Q, _csr->csrVSize);
+
+    //record that nodes which haven't been source yet
+    int* nodeDone = (int*)calloc(sizeof(int), _csr->csrVSize);
+    
+    //record nodes belongs to which neighbor of source
+    int  mappingCount_max           = 32; //最大可以設64
+    int* mapping_SI                 = (int*)malloc(sizeof(int) * 32);
+    vector<unsigned int> sharedBitIndex(_csr->csrVSize, 0); // for recording blue edge bitIndex
+    vector<unsigned int> relation(_csr->csrVSize, 0);       // for recording red edge bitIndex
+    vector<unsigned long long> sameIndex(_csr->csrVSize, 0);// for recording blue edge BC_sameIndex
+
+    // Allocate memory for BFS data structures
+    vector<vector<int>> S(V);              // S is a 2D stack
+    vector<int> sigma(V, 0);               // Sigma array
+    vector<int> dist(V, -1);               // Distance array
+    vector<float> delta(V, 0.0);           // Delta array
+    vector<vector<int>> Successors(V);     // Successors list 
+
+    //可重複使用的空間
+    vector<int> S_size(V, 0);              // Stack size for each level
+    queue<int> f1, f2;                     // Current and Next frontier
+    queue<Q_struct>  Q_f1,Q_f2;
+    vector<Q_struct> Q_f2_temp(V);
+    //N(s)鄰居的traverse 路徑數量、距離、Suc、Sigma
+    vector<vector<int>>   Ns_dist  (mappingCount_max, vector<int>(V,-1));               // Distance array
+    vector<vector<int>>   Ns_sigma (mappingCount_max, vector<int>(V,0));
+    vector<vector<float>> Ns_delta (mappingCount_max, vector<float>(V,0.0));            // Delta array
+    vector<vector<vector<int>>> Ns_Successors(mappingCount_max,vector<vector<int>>(V)); // Successors [][][]: [source的Suc] [V] [V的Suc] 
+    vector<vector<Q_struct>> Ns_S(V);               // S is a 2D stack [level][node]...
+
+
+    //Suc與edge數據
+    unsigned long Suc_times=0;
+    unsigned long edge_times=0;
+    //用degree做排序 大->小
+    _csr->orderedCsrV  = (int*)calloc(sizeof(int), (_csr->csrVSize) *2);
+    for(int i=_csr->startNodeID;i<=_csr->endNodeID;i++){
+            _csr->orderedCsrV[i]=i;
+    }
+    quicksort_nodeID_with_degree(_csr->orderedCsrV, _csr->csrNodesDegree, _csr->startNodeID, _csr->endNodeID);
+
+    // for(int sourceID = _csr->startNodeID ; sourceID <= _csr->endNodeID ; sourceID ++){
+    
+
+
+    for(int sourceIDIndex = _csr->startNodeID ; sourceIDIndex <= _csr->endNodeID ; sourceIDIndex ++){
+        int sourceID = _csr->orderedCsrV[sourceIDIndex];
+        if(nodeDone[sourceID] == 1){
+            continue;
+        }
+        nodeDone[sourceID] = 1;
+
+        // printf("SourceID = %2d\n", sourceID);
+
+        int currentNodeID  = -1;
+        int neighborNodeID = -1;
+        int neighborIndex  = -1;
+        
+        //each neighbor of sourceID mapping to bit_SI, if it haven't been source yet
+        //挑選鄰居
+        int mappingCount = 0;
+        for(neighborIndex = _csr->csrV[sourceID] ; neighborIndex < _csr->csrV[sourceID + 1] ; neighborIndex ++){
+            neighborNodeID = _csr->csrE[neighborIndex];
+
+            if(nodeDone[neighborNodeID] == 0){
+                //Record to 32 bit only
+                if(mappingCount == mappingCount_max){
+                    break;
+                }
+
+                sharedBitIndex[neighborNodeID] = 1 << mappingCount;
+                mapping_SI[mappingCount] = neighborNodeID;
+                nodeDone[neighborNodeID] = 1;
+
+                // printf("sharedBitIndex[%6d] = %8x,\tmapping_SI[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], mappingCount, mapping_SI[mappingCount]);
+                #ifdef DEBUG
+                printf("sharedBitIndex[%2d] = %8x,\tmapping_SI[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], mappingCount, mapping_SI[mappingCount]);
+                #endif
+                
+                mappingCount ++;
+            }
+        }
+
+        //**********************************/
+        //   Source forward traverse
+        //**********************************/
+        #pragma region SourceTraverse //forward traverse
+        
+        // Initialize arrays for each source node
+        sigma.assign(V, 0);   // Reset sigma to size V with all values 0
+        dist.assign(V, -1);   // Reset dist to size V with all values -1
+        delta.assign(V, 0.0); // Reset delta to size V with all values 0.0
+
+        for (auto& level : S) {
+            level.clear();
+        }
+        for (auto& Suc : Successors) {
+            Suc.clear();
+        }
+
+        sigma[sourceID] = 1;
+        dist[sourceID] = 0;
+        f1.push(sourceID);
+        int level = 0;
+        // cout<<"source ID: "<<sourceID<<endl;
+        // BFS forward phase
+        
+        while (!f1.empty()){
+            while (!f1.empty()) {
+                int currentNodeID = f1.front();
+                f1.pop();
+                S[level].push_back(currentNodeID);
+                #ifdef DEBUG
+                printf("currentNodeID = %2d ... dist = %2d\n", currentNodeID, dist[currentNodeID]);
+                #endif
+                // Traverse neighbors in CSR
+                for(neighborIndex = _csr->csrV[currentNodeID] ; neighborIndex < _csr->csrV[currentNodeID + 1] ; neighborIndex ++) {
+                    int neighborNodeID =  _csr->csrE[neighborIndex];
+
+                    if (dist[neighborNodeID] == -1) {
+                        dist[neighborNodeID] = dist[currentNodeID] + 1;
+                        sigma[neighborNodeID] += sigma[currentNodeID];
+                        sharedBitIndex[neighborNodeID] |= sharedBitIndex[currentNodeID];
+                        Successors[currentNodeID].push_back(neighborNodeID);
+                        f2.push(neighborNodeID);
+                        #ifdef DEBUG
+                        printf("\t[1]unvisited_SI[%2d] => %2x, dist[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], neighborNodeID, dist[neighborNodeID]);
+                        #endif
+                    }
+                    else if (dist[neighborNodeID] == dist[currentNodeID] + 1) {
+                        sharedBitIndex[neighborNodeID] |= sharedBitIndex[currentNodeID];
+                        Successors[currentNodeID].push_back(neighborNodeID);
+                        sigma[neighborNodeID] += sigma[currentNodeID];
+                        #ifdef DEBUG
+                        printf("\t[2]unvisited_SI[%2d] => %2x, dist[%2d] = %2d\n", neighborNodeID, sharedBitIndex[neighborNodeID], neighborNodeID, dist[neighborNodeID]);
+                        #endif
+                    }
+                    else if(dist[neighborNodeID] == dist[currentNodeID] && currentNodeID < neighborNodeID){ //traverse to discovered neighbor which is at same level as currentNodeID
+                        relation[currentNodeID]     |= sharedBitIndex[neighborNodeID] & (~sharedBitIndex[currentNodeID]);
+                        relation[neighborNodeID]    |= sharedBitIndex[currentNodeID]  & (~sharedBitIndex[neighborNodeID]);
+                        #ifdef DEBUG
+                        printf("\t[3]Red edge found(%2d, %2d), ", currentNodeID, neighborNodeID);
+                        printf("relation[%2d] = %2x, relation[%2d] = %2x\n", currentNodeID, relation[currentNodeID], neighborNodeID, relation[neighborNodeID]);
+                        #endif
+
+                    }//&& relation[neighborNodeID]
+                    else if(dist[neighborNodeID] == dist[currentNodeID] - 1){
+                        //這一步是讓SI 跟R只會顯示一個 SI:1 R:0 幫助最終判鄰居是否相同 
+                        relation[currentNodeID]     = (relation[currentNodeID]|relation[neighborNodeID]) & (~sharedBitIndex[currentNodeID] );
+                        #ifdef DEBUG
+                        printf("\t[4]Red edge found(%2d, %2d), ", currentNodeID, neighborNodeID);
+                        printf("relation[%2d] = %2x, relation[%2d] = %2x\n", currentNodeID, relation[currentNodeID], neighborNodeID, relation[neighborNodeID]);
+                        #endif
+                    }
+                }
+
+            }
+            swap(f1, f2);
+            level++;
+        }
+
+
+
+        #ifdef DEBUG
+            //printf successor
+            printf("\n");
+            for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+                printf("Successor(%d) sigma(%d) ",i,sigma[i] );
+                for (int j=0;j<Successors[i].size();j++){
+                    printf("%d ",Successors[i][j]);
+                }
+                printf("\n");
+            }
+
+            for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+                printf("%d: SI(%d) R(%d)\n",i,sharedBitIndex[i],relation[i] );
+            }
+        #endif
+
+        #pragma endregion
+        //**********************************/
+        //   Source backward traverse
+        //**********************************/
+        #pragma region sourceDistAccumulation_pushBased
+            // Backward phase
+            // for (int d = level - 1; d > 0; --d) {
+            //     for (int w : S[d]) {
+            //         for (int v : Successors[w]) {
+            //             delta[w] += (sigma[w] / (float)sigma[v]) * (1.0 + delta[v]);
+            //         }
+            //         _BCs[w] += delta[w];
+            //     }
+            // }
+            for (int d = level - 1; d >= 0; --d) {
+                for (int node : S[d]) { 
+                    for(neighborIndex = _csr->csrV[node] ; neighborIndex < _csr->csrV[node + 1] ; neighborIndex ++) {
+                        int neighborNodeID =  _csr->csrE[neighborIndex];
+
+                        //1:代表我有不一樣的鄰居(edge)  0:代表node的鄰居都是一樣的顏色(Suc)
+                        sameIndex[node] |= (sharedBitIndex[node]^sharedBitIndex[neighborNodeID])|(relation[node]^relation[neighborNodeID]);
+                        
+                        //normal backward
+                        if(dist[neighborNodeID] == dist[node] + 1 )
+                            delta[node] += (sigma[node] / (float)sigma[neighborNodeID]) * (1.0 + delta[neighborNodeID]);
+                        
+                    }
+                    ///normal BC accumulation
+                    if (node != sourceID) {
+                        // printf("delta[%d]: (%.2f)\n",node,delta[node]);
+                        _BCs[node] += delta[node];
+                    }
+                }
+            }
+        #pragma endregion //distAccumulation_pushBased
+        
+        // for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+        //     printf("_BC_first[%d]: (%.2f)\n",i,_BCs[i]);
+        // }
+        
+        #ifdef DEBUG //print SI、R、sameIndex
+            for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+                printf("_BC[%d]: (%.2f)\n",i,_BCs[i]);
+            }
+            for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+                printf(" sameIndex[%d]: ",i);
+                printbinary(sameIndex[i],mappingCount);
+                printf("\tSI[%d]: ",i);
+                printbinary(sharedBitIndex[i],mappingCount);
+                printf("\t R[%d]: ",i);
+                printbinary(relation[i],mappingCount);
+            }
+        #endif
+
+        //****************************************/
+        //   N(s) forward traverse(鄰居當Source)
+        //****************************************/
+        //初始Ns的資訊
+        if(mappingCount){
+            Ns_sigma.assign(mappingCount, vector<int>(V, 0));  // Reset Ns_sigma with zeros
+            Ns_dist.assign(mappingCount, vector<int>(V, -1));  // Reset Ns_dist with -1 (unvisited)
+            Ns_delta.assign(mappingCount, vector<float>(V, 0.0)); // Reset Ns_delta with 0.0
+            Ns_Successors.assign(mappingCount, vector<vector<int>>(V)); // Clear and reset Ns_Successors
+            Q_f2_temp.assign(V, Q_struct{0, -1}); // Reset Q_f2_temp using assign
+            Ns_S.assign(V, vector<Q_struct>());  // Reset Ns_S with empty vectors
+        }
+        
+
+        //這部分使用 multi-source實作
+        #pragma region third_part
+
+        // printf("---------initial Queue-----------\n");
+        for (int i = 0; i < mappingCount; i++) {
+            int sourceNode = mapping_SI[i];
+            Ns_sigma[i][sourceNode] = 1.0;
+            Ns_dist[i][sourceNode]  = 0;
+            Q_f1.push({(1ULL << i),sourceNode});
+
+            //printf
+            // printf("f1[%d]:[%d,",i,sourceNode);
+            // printbinary((1ULL << i),mappingCount);
+        }
+        // printf("----------------0-----------------\n");
+        
+        level=0;
+        // BFS forward phase
+        while (!Q_f1.empty()){
+            while (!Q_f1.empty()) {
+                int currentNodeID   = Q_f1.front().nodeID;
+                uint64_t traverse_S = Q_f1.front().traverse_S;
+                Ns_S[level].push_back(Q_f1.front());
+                Q_f1.pop();
+                //mapping
+                // Suc/edge neighbor
+                for (auto multi_node = 0; multi_node < mappingCount; multi_node++) {
+                    // uint64_t bit_mask=(1ULL << multi_node);
+                    if (traverse_S & (1ULL << multi_node)){ //該node在這層traverse到
+                        if( (sameIndex[currentNodeID] & (1ULL << multi_node)) == 0 ){ //Suc_traverse
+                            Suc_times++;
+                            // printf("[%d] Suc_traverse\n",  currentNodeID);
+                            for (auto SucNodeInDex = 0; SucNodeInDex < Successors[currentNodeID].size(); SucNodeInDex++) {
+                                int SucNodeID = Successors[currentNodeID][SucNodeInDex];
+
+                                Ns_dist [multi_node][SucNodeID]  = Ns_dist[multi_node][currentNodeID] +1;
+                                Ns_sigma[multi_node][SucNodeID] += Ns_sigma[multi_node][currentNodeID];
+                                Ns_Successors[multi_node][currentNodeID].push_back(SucNodeID);
+                                //push node into Q_f2_temp
+                                Q_f2_temp[SucNodeID].nodeID=SucNodeID;
+                                Q_f2_temp[SucNodeID].traverse_S|= (traverse_S & (1ULL << multi_node));
+                                // printf("[%d] push in Suc\n",  SucNodeID);
+                            }
+                        }else{//edge_traverse
+                            edge_times++;
+                            // printf("[%d] edge_traverse\n",  currentNodeID);
+                            for (auto neighborIndex = _csr->csrV[currentNodeID]; neighborIndex < _csr->csrV[currentNodeID + 1]; neighborIndex++) {
+                                int neighborNodeID = _csr->csrE[neighborIndex];
+                                //累加路徑數量、dist
+                                if (Ns_dist[multi_node][neighborNodeID] == -1) {
+                                    Ns_Successors[multi_node][currentNodeID].push_back(neighborNodeID);
+                                    
+                                    Ns_dist [multi_node][neighborNodeID]  = Ns_dist[multi_node][currentNodeID] + 1;
+                                    Ns_sigma[multi_node][neighborNodeID] += Ns_sigma[multi_node][currentNodeID];
+
+                                    // printf("[%d] push in edge\n",  neighborNodeID);
+                                    Q_f2_temp[neighborNodeID].nodeID=neighborNodeID;
+                                    Q_f2_temp[neighborNodeID].traverse_S|= (traverse_S & (1ULL << multi_node));
+                                }
+                                else if (Ns_dist[multi_node][neighborNodeID] == Ns_dist[multi_node][currentNodeID] + 1) {
+                                    Ns_Successors[multi_node][currentNodeID].push_back(neighborNodeID);
+                                    Ns_sigma[multi_node][neighborNodeID] += Ns_sigma[multi_node][currentNodeID];
+                                }
+                            }
+                        }
+
+                    }
+                }
+                
+            }
+            
+            //在這定義Q_f2_temp(vector)搜尋V個node，把對應index的node放進Q_f2
+            for(int insert_q = _csr->startNodeID ; insert_q <=_csr->endNodeID ; insert_q++ ){
+                if(Q_f2_temp[insert_q].nodeID!=-1){
+                    Q_f2.push(Q_f2_temp[insert_q]);
+                    //print DeBUG
+                    // printf("Q_f2[%d]:[%d,",insert_q, Q_f2_temp[insert_q].nodeID);
+                    // printbinary(Q_f2_temp[insert_q].traverse_S,mappingCount);
+                }
+            }
+            // printf("----------------%d----------------\n",(level+1));
+            
+            //做Q_f1(空的), Q_f2交換
+            swap(Q_f1, Q_f2);
+            Q_f2_temp.assign(V, Q_struct{0, -1}); // Reset Q_f2_temp using assign
+            level++;
+        }
+
+        //print Ns dist path Suc
+        // for(int i=_csr->startNodeID; i<=_csr->endNodeID;i++){
+        //     printf("dist{%d}: ",i);
+        //     for(int j=0; j<Ns_dist[i].size();j++){
+        //         printf("%d ",Ns_dist[i][j]);
+        //     }
+        //     printf("\n");
+        // }
+        
+        // for(int i=_csr->startNodeID; i<=_csr->endNodeID;i++){
+        //     printf("sigma{%d}: ",i);
+        //     for(int j=0; j<Ns_sigma[i].size();j++){
+        //         printf("%d ",Ns_sigma[i][j]);
+        //     }
+        //     printf("\n");
+        // }
+
+        // for(int i=0; i<mappingCount;i++){
+        //     printf("Successors{%d}: \n",mapping_SI[i]);
+        //     for(int j=_csr->startNodeID; j<=_csr->endNodeID;j++){
+        //         printf("{%d}: ",j);
+        //         for(auto& x:Ns_Successors[i][j]){
+        //             printf("%d ",x);
+        //         }
+        //         printf("\n");
+        //     }
+        //     printf("\n");
+        // }
+
+
+        #pragma endregion //neighborOfSource_GetDist
+
+        //****************************************/
+        //   N(s) backward traverse
+        //****************************************/
+        #pragma region forth_part
+        for (int d = level - 1; d > 0; --d) {
+            // printf("--------back level: %d------------\n",d);
+            for (auto node : Ns_S[d]) {
+                for(auto multi_node = 0; multi_node < mappingCount; multi_node++){
+                    uint64_t bit_mask = (1ULL<<multi_node);
+                    if(node.traverse_S & bit_mask){
+                        for (auto SucNodeInDex = 0; SucNodeInDex < Ns_Successors[multi_node][node.nodeID].size(); SucNodeInDex++) {
+                            int SucNodeID = Ns_Successors[multi_node][node.nodeID][SucNodeInDex];
+                            Ns_delta[multi_node][node.nodeID] += (Ns_sigma[multi_node][node.nodeID] / (float)Ns_sigma[multi_node][SucNodeID]) * (1.0 + Ns_delta[multi_node][SucNodeID]);
+                        }
+                        
+                        // if(node.nodeID != mapping_SI[multi_node]){
+                            // printf("Ns_delta[%d][%d]: (%.2f)\n",node.nodeID,mapping_SI[multi_node],Ns_delta[node.nodeID][multi_node]);
+                            _BCs[node.nodeID] += Ns_delta[multi_node][node.nodeID];
+                        // }
+                        
+                    }
+                }
+                
+            }
+        }
+
+       
+        #pragma endregion //neighborOfSource_GetDist
+
+        //reset the SI & relation arrays
+        relation.assign(_csr->csrVSize, 0);       // Reset relation to size _csr->csrVSize with all values 0
+        sharedBitIndex.assign(_csr->csrVSize, 0); // Reset sharedBitIndex to size _csr->csrVSize with all values 0
+        sameIndex.assign(_csr->csrVSize, 0);      // Reset sameIndex to size _csr->csrVSize with all values 0
+
+    }
+
+    unsigned long total_times=edge_times+Suc_times;
+    printf("suc  traverse: %0.2f\n", Suc_times/(float)total_times);
+    printf("edge traverse: %0.2f\n", edge_times/(float)total_times);
+    
+    // for (int i= _csr->startNodeID;i<=_csr->endNodeID;i++) {
+    //     printf("_BC[%d]: (%.2f)\n",i,_BCs[i]);
+    // }
+
+    // printf("\n[BC_sharedBased] Done!\n");
+}
+
+
+//************************************************ */
+//                   循序_brandes MS原版
+//************************************************ */
 void Seq_multi_source_brandes( CSR& csr, int max_multi, vector<float> &BC) {
     // Start timing
     // multi_time_start = seconds();
@@ -663,195 +2270,7 @@ void Seq_multi_source_brandes_ordered( CSR& csr, int max_multi, vector<float> &B
     free(dist_INIT);
 }
 
-//循序_brandes原版
-void brandes_ORIGIN_for_Seq( CSR& csr, int V, vector<float> &BC) {
-    // time_start = seconds();
 
-  
-
-    // Allocate memory for sigma, dist, delta, and the stack S
-    int**  S = (int**)malloc(V * sizeof(int*));      // S is a 2D array (stack)
-    int*   sigma = (int*)malloc(V * sizeof(int));     // sigma is a 1D array
-    int*   dist = (int*)malloc(V * sizeof(int));      // dist is a 1D array
-    float* delta = (float*)malloc(V * sizeof(float)); // delta is a 1D array
-    int*   S_size = (int*)malloc(V * sizeof(int));    // S_size records the size of each level
-    int*   f1 = (int*)malloc((V ) * sizeof(int));
-    int*   f2 = (int*)malloc((V ) * sizeof(int));
-    int    f1_indicator;
-    int    f2_indicator;
-
-    for (int i = 0; i < V; i++) {
-        S[i] = (int*)malloc(V *sizeof(int));       // Each level's stack size V, adjust as needed
-        S_size[i] = 0;                              // Initialize the size of each level
-    }
-
-    for (int s = csr.startNodeID; s <= csr.endNodeID; ++s) {
-        // Initialize variables for each source node
-        // time1 = seconds();
-        for (int i = 0; i < V; i++) {
-            free(S[i]);
-            S[i] = (int*)malloc(V*sizeof(int));   // Each level's stack size V, adjust as needed
-            sigma[i] = 0;
-            dist[i] = -1;
-            delta[i] = 0.0;
-            S_size[i] = 0; // Reset size of each level
-        }
-    
-        sigma[s] = 1;
-        dist[s] = 0;
-        f1_indicator = 0;
-        f2_indicator = 0;
-        // Re-initialize current_queue
-        f1[f1_indicator++] = s;
-        
-
-        int level =0;
-        // BFS forward phase: frontier-based BFS with extra mallocs
-        while (f1_indicator>0) { //!qIsEmpty(current_queue)
-            // printf("level: %d\n",level);
-            
-            // Allocate new memory for next_queue in each iteration
-            int* currentQueue;
-            int* nextQueue;
-            if(level% 2 == 0){
-                currentQueue = f1;
-                nextQueue = f2;
-            }
-            else{
-                currentQueue = f2;
-                nextQueue = f1;
-            }
-            
-            for(int v=0; v<f1_indicator; v++) {
-                int u = currentQueue[v];
-                S[level][S_size[level]++] = u;  // Put node u into its level
-                
-                // Traverse the adjacent nodes in CSR format
-                for (int i = csr.csrV[u]; i < csr.csrV[u + 1]; ++i) {
-                    int w = csr.csrE[i];
-                    
-                    // If w has not been visited, update distance and add to next_queue
-                    if (dist[w] < 0) {
-                        dist[w] = dist[u] + 1;
-                        nextQueue[f2_indicator++] = w;
-                        
-                    }
-
-                    // When a shortest path is found
-                    if (dist[w] == dist[u] + 1) {
-                        sigma[w] += sigma[u];
-                    }
-                }
-            }
-            
-            // Free current_queue and set it to next_queue for the next iteration
-            f1_indicator = f2_indicator;
-            f2_indicator = 0;
-            level++;
-            
-            // printf("level: %d\n",level);
-            // qShowAllElement(current_queue);
-            
-        }
-
-        // time2 = seconds();
-        // forward_Time += (time2 - time1);
-        // time1 = seconds();
-
-        // Backward phase to compute BC values
-        for (int d = level - 1; d >= 0; --d) {  // Start from the furthest level
-            
-            for (int i = 0; i < S_size[d]; ++i) {
-                int w = S[d][i];
-                
-                for (int j = csr.csrV[w]; j < csr.csrV[w + 1]; ++j) {
-                    int v = csr.csrE[j];
-                    if (dist[v] == dist[w] - 1) {
-                        delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
-                    }
-                }
-                if (w != s) {
-                    BC[w] += delta[w];
-                }
-            }
-            
-        }
-        // time2 = seconds();
-        // backward_Time += (time2 - time1);
-    }
-
-    // time_end = seconds();
-    // total_time = (time_end - time_start);
-    // Free memory for S and its levels
-    for (int i = 0; i < V; i++) {
-        free(S[i]);
-    }
-    free(S);
-    free(sigma);
-    free(dist);
-    free(delta);
-    free(S_size);
-}
-
-//循序_brandes切D1與AP
-void Seq_MS_brandes_me_D1_AP(CSR* csr, int max_multi, vector<float> &BC) {
-    // Start timing
-    // multi_time_start = seconds();
-
-    int v_size = csr->csrVSize;
-    int* map_S = (int*)malloc(sizeof(int) * max_multi); // Multiple sources
-    bool* nodeDone = (bool*)calloc(v_size, sizeof(bool));
-
-    size_t multi_size = v_size * max_multi;
-
-    int* s_size = (int*)malloc(sizeof(int) * v_size);
-    float* dist_MULTI = (float*)malloc(sizeof(float) * multi_size);
-    float* sigma_MULTI = (float*)malloc(sizeof(float) * multi_size);
-    float* delta_MULTI = (float*)malloc(sizeof(float) * multi_size);
-
-    Q_struct** s = (Q_struct**)malloc(v_size * sizeof(Q_struct*));
-    Q_struct* f1 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
-    Q_struct* f2 = (Q_struct*)malloc(v_size * sizeof(Q_struct));
-
-    // Pre-initialize dist_MULTI to INFINITE
-    float* dist_INIT = (float*)malloc(sizeof(float) * multi_size);
-    
-    for (size_t i = 0; i < multi_size; i++) {
-        dist_INIT[i] = INFINITE;
-    }
-    // showCSR(csr);
-    //D1 Folding
-    D1Folding(csr);
-    // for(int i=0;i<csr->csrVSize;i++){
-    //     std::cout<<"_csr->representNode["<<i<<"]: "<<csr->representNode[i]<<"\t_csr->ff["<<i<<"]: "<<csr->ff[i]<<endl;
-    // }
-
-    // showCSR(csr);
-    //標記那些node是AP
-    AP_detection(csr);
-    //做3case的分割
-    AP_Copy_And_Split_BC(csr);
-
-    // struct newID_info* newID_infos = rebuildGraph(csr);
-    // for(int i=0;i< csr->ap_count;i++){
-    //     cout<<csr->AP_List[i]<<" ";
-    // }
-    // cout<<"csr.ap_count: "<<csr->ap_count<<"\n";
-    // multi_time_end = seconds();
-    // multi_total_time = (multi_time_end - multi_time_start);
-
-    // Free memory
-    free(s_size);
-    free(dist_MULTI);
-    free(sigma_MULTI);
-    free(delta_MULTI);
-    free(map_S);
-    free(nodeDone);
-    free(s);
-    free(f1);
-    free(f2);
-    free(dist_INIT);
-}
 
 //************************************************ */
 //                   平行程式 SS
