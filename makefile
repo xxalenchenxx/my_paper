@@ -41,7 +41,7 @@
 ###################   C++ #######################
 # 编译器和编译选项
 CC = nvcc
-CFLAGS = -O2 -lineinfo -g
+CFLAGS = -O3 -g
 
 # 目标文件和可执行文件名
 TARGET = a
@@ -58,7 +58,7 @@ remain_OBJS := AP_Process.o
 all: $(TARGET)
 
 $(TARGET): $(LIB_OBJS)
-	$(CC) $(CFLAGS) BC.cu $^ -o $@
+	$(CC) $(CFLAGS) centrality.cu $^ -o $@
 
 $(LIB_OBJS): %.o: $(LIB_DIRS)%
 	$(CC) $(CFLAGS) -c $</$*.cpp -o $@
