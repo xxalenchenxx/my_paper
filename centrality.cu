@@ -4,6 +4,7 @@
 #include <cmath> // 引入 floor 函數
 #include <iostream>
 #include <stdlib.h>
+#include <unordered_map>
 #include <string.h>
 #include <iomanip>  // 需要包含這個頭文件以使用 setprecision
 #include <cuda_runtime.h>
@@ -76,10 +77,16 @@ inline void resetQueue(struct qQueue* _Q){
     //Q->size如果不變，就不須memcpy
 }
 
+struct timeRecord{
+    double phase1;
+    double phase2;
+    int times;
+};
 
 void brandes(CSR& csr, int V, float* BC);
 void bellman_D2(CSR& csr, int V, float* BC);
 void bellman_all_Degree(CSR& csr, int V, float* BC_ans);
+void DMF_degree_compare(CSR& csr, int V, float* BC_ans);
 
 void printbinary(int data,int mappingcount){
     int count = mappingcount;
@@ -124,7 +131,8 @@ int main(int argc, char* argv[]){
 
     multi_time1 = seconds();
     // bellman_D2(*csr,csr->csrVSize,ans_para);
-    bellman_all_Degree(*csr,csr->csrVSize,ans_para);
+    // bellman_all_Degree(*csr,csr->csrVSize,ans_para);
+    DMF_degree_compare(*csr,csr->csrVSize,ans_para);
     multi_time2 = seconds();
     printf("done 2\n");
 
@@ -776,11 +784,11 @@ void bellman_all_Degree(CSR& csr, int V, float* BC_ans) {
     printf("start\n");
     int times=0;
     for (int s = csr.startNodeID; s <= csr.endNodeID; ++s) {
-        if(times==2){
-            break;
-        }
+        // if(times==2){
+        //     break;
+        // }
 
-        if(csr.csrNodesDegree[s]==3 ){
+        if(csr.csrNodesDegree[s]==2 ){
             times++;
 
             sigma.assign(V, 0);   // Reset sigma to size V with all values 0
@@ -845,48 +853,51 @@ void bellman_all_Degree(CSR& csr, int V, float* BC_ans) {
             // printf("max_depth: %d\n",max_depth);
             Source_depth_temp=Source_depth;
             // backward 累加 D2以及兩個D2鄰居的delta BC值
-            vector<int> s_N(csr.csrNodesDegree[s]);
-            for (int i = 0; i < csr.csrNodesDegree[s]; ++i) {
-                s_N[i] = csr.csrE[csr.csrV[s] + i];
-            }
+
             
             while (max_depth > 0) {
                 // 遍歷所有鄰居
-                for (int i = 0; i < csr.csrNodesDegree[s]; ++i) {
-                    int current_source = s_N[i];
-            
+                for (int i = csr.csrV[s]; i < csr.csrV[s + 1]; ++i) {
+                    int current_source = csr.csrE[i];
+
                     if (max_depth == Source_depth_temp[current_source]) {
                         // 處理當前 source 的節點
+                        printf("delta[%d]\n",current_source);
                         for (int node : Source_S[current_source][max_depth]) {
                             for (int neighborIndex = csr.csrV[node]; neighborIndex < csr.csrV[node + 1]; ++neighborIndex) {
                                 int backneighbor_ID = csr.csrE[neighborIndex];
-            
+
                                 if (Source_distance[current_source][backneighbor_ID] == Source_distance[current_source][node] - 1) { // Predecessor
                                     Source_delta[current_source][backneighbor_ID] += (1.0f + Source_delta[current_source][node]) *
-                                            (Source_path[current_source][backneighbor_ID]) / (float)Source_path[current_source][node];
-                                    
+                                        (Source_path[current_source][backneighbor_ID]) / (float)Source_path[current_source][node];
+
                                     // 確保 Source_distance[current_source][node] 是最小的
                                     bool is_min_distance = true;
-                                    for (int j = 0; j < csr.csrNodesDegree[s]; ++j) {
-                                        if (Source_distance[s_N[j]][node] < Source_distance[current_source][node]) {
+                                    for (int j = csr.csrV[s]; j < csr.csrV[s + 1]; ++j) {
+                                        if (Source_distance[csr.csrE[j]][node] < Source_distance[current_source][node]) {
                                             is_min_distance = false;
                                             break;
                                         }
                                     }
-            
-                                    if (is_min_distance && s!=node) {
+
+                                    if (is_min_distance && s != node) {
                                         // 累加所有最小距離的路徑數
                                         int total_min_path = 0;
-                                        for (int j = 0; j < csr.csrNodesDegree[s]; ++j) {
-                                            if (Source_distance[s_N[j]][node] == Source_distance[current_source][node]) {
-                                                total_min_path += Source_path[s_N[j]][node];
+                                        for (int j = csr.csrV[s]; j < csr.csrV[s + 1]; ++j) {
+                                            if (Source_distance[csr.csrE[j]][node] == Source_distance[current_source][node]) {
+                                                total_min_path += Source_path[csr.csrE[j]][node];
                                             }
                                         }
-                                        
-                                        Source_delta[s][backneighbor_ID] += (1.0f + Source_delta[s][node])/ (float)total_min_path;
-                                        
-                                    }
 
+                                        // 正確的 delta 累加邏輯
+                                        for (int j = csr.csrV[s]; j < csr.csrV[s + 1]; ++j) {
+                                            int other_source = csr.csrE[j];
+                                            if (Source_distance[other_source][node] == Source_distance[current_source][node]) {
+                                                Source_delta[s][backneighbor_ID] += (Source_path[current_source][backneighbor_ID] / (float)total_min_path) *
+                                                    (1.0f + Source_delta[s][node]);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -897,25 +908,34 @@ void bellman_all_Degree(CSR& csr, int V, float* BC_ans) {
             }
 
             
+            
 
-            //透過前面D2鄰居的sigma以及level可以推敲出 D2node的path數量 (檢測path是否正確)
-            // for(int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID){
-            //     if(v_ID==s){
-            //         Source_distance[s][s]=0;
-            //         Source_path[s][s]=1;
-            //     }else{
-            //         if( Source_distance[csr.csrE[csr.csrV[s]]][v_ID] == Source_distance[csr.csrE[csr.csrV[s]+1]][v_ID]){
-            //             Source_distance[s][v_ID]=Source_distance[csr.csrE[csr.csrV[s]]][v_ID]+1;
-            //             Source_path[s][v_ID]=Source_path[csr.csrE[csr.csrV[s]]][v_ID]+Source_path[csr.csrE[csr.csrV[s]+1]][v_ID];
-            //         }else if( Source_distance[csr.csrE[csr.csrV[s]]][v_ID] < Source_distance[csr.csrE[csr.csrV[s]+1]][v_ID] ){
-            //             Source_path[s][v_ID]=Source_path[csr.csrE[csr.csrV[s]]][v_ID];
-            //             Source_distance[s][v_ID]=Source_distance[csr.csrE[csr.csrV[s]]][v_ID]+1;
-            //         }else{
-            //             Source_path[s][v_ID]=Source_path[csr.csrE[csr.csrV[s]+1]][v_ID];
-            //             Source_distance[s][v_ID]=Source_distance[csr.csrE[csr.csrV[s]+1]][v_ID]+1;
-            //         }
-            //     }
-            // }
+            //透過前面多個degree鄰居的sigma以及level可以推敲出 D2node的path數量
+            for(int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID){
+                if(v_ID==s){
+                    Source_distance[s][s]=0;
+                    Source_path[s][s]=1;
+                }else{
+                    //Source_path[s][v_ID]    : 每個S的鄰居到v_ID的距離最小就累加。
+                    //Source_distance[s][v_ID]: 每個S的鄰居到v_ID的距離最小。
+
+                    int min_distance=INT32_MAX;
+                    for (int i = csr.csrV[s]; i < csr.csrV[s+1]; ++i) { //每個S的鄰居到v_ID的距離
+                        int current_source = csr.csrE[i];
+                        min_distance=min(min_distance,Source_distance[current_source][v_ID]);
+                    }
+                    Source_distance[s][v_ID]=min_distance+1;
+
+                    for (int i = csr.csrV[s]; i < csr.csrV[s+1]; ++i) { //每個S的鄰居到v_ID的距離
+                        int current_source = csr.csrE[i];
+                        if( min_distance == Source_distance[current_source][v_ID]){ //current_source距離v_ID是最短
+                            Source_path[s][v_ID]+=Source_path[current_source][v_ID];
+                        }
+                    }
+                }
+            }
+
+            //
 
 
            
@@ -967,7 +987,35 @@ void bellman_all_Degree(CSR& csr, int V, float* BC_ans) {
             }
              #pragma endregion
 
+
+            //對path答案
             bool flag = true;
+            // for (int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID) {
+
+            //     if (sigma[v_ID] != Source_path[s][v_ID]) {
+            //         flag = false;
+            //         printf("sigma[%d]: %d  Source_path[%d][%d]: %d\n",
+            //                v_ID, sigma[v_ID], s, v_ID, Source_path[s][v_ID]);
+            //     }
+            // }
+            // if (flag)
+            //     printf("[Correct] Same path from D2!!\n");
+
+
+            //對dist答案
+            // flag = true;
+            // for (int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID) {
+
+            //     if (sigma[v_ID] != Source_path[s][v_ID]) {
+            //         flag = false;
+            //         printf("dist[%d]: %d  Source_dist[%d][%d]: %d\n",
+            //                v_ID, sigma[v_ID], s, v_ID, Source_distance[s][v_ID]);
+            //     }
+            // }
+            // if (flag)
+            //     printf("[Correct] Same dist from D2!!\n");
+            
+            flag=true;
             for (int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID) {
                 // 取小數點後兩位，並捨棄後續位數
                 float delta_rounded = std::floor(delta[v_ID] * 1000) / 1000;
@@ -980,14 +1028,346 @@ void bellman_all_Degree(CSR& csr, int V, float* BC_ans) {
                 }
             }
             if (flag)
-                printf("[Correct] Same BC from D2!!\n");
+                printf("[Correct] Same delta from D2!!\n");
 
            
-            // break;
+            break;
         }
         
         
     }
     
 }
+
+void DMF_degree_compare(CSR& csr, int V, float* BC_ans) {
+    // Allocate memory for BFS data structures
+    // vector<vector<int>> S(V);               // S is a 2D stack
+    // vector<int> sigma(V, 0);               // Sigma array
+    // vector<int> dist(V, -1);                // Distance array
+    // vector<float> delta(V, 0.0);           // Delta array
+    // // vector<int> S_size(V, 0);              // Stack size for each level
+    // queue<int> f1, f2;                     // Current and Next frontier
+    // vector<vector<int>> predecessors(V);   // Predecessor list
+
+    // vector<vector<int>> Source_path(V,vector<int>(V,0));    // 2D sigma_path[s][v] : number of path "source s to v"
+    // vector<vector<int>> Source_distance(V,vector<int>(V,-1));   // 2D sigma_level[s][v]: number of path "source s to v"
+    // vector<vector<float>> Source_delta(V,vector<float>(V,0.0));    // 2D sigma_path[s][v] : number of path "source s to v"
+    // vector<int> Source_depth(V,0);  //bellman在backward時需要的depth
+    // vector<int> Source_depth_temp(V,0);  //bellman在backward時需要的depth
+    // vector<vector<vector<int>>> Source_S(V,vector<vector<int>>(V));     // S is a 3D stack[source][level][node]: [source的Stack][層數][點的ID]
+    // int max_depth=0;
+    vector<float> BC_D2(V,0.0f);
+
+    vector<bool> Degree_visited( (csr.maxDegree+1),0);
+    vector<timeRecord> times_record((csr.maxDegree+1),{0.0f,0.0f,0});
+    
+    double avg_degree= (double)csr.csrESize/csr.csrVSize;
+
+    long long total_predecessor_count = 0; // To accumulate total predecessors
+
+    double time_phase1=0.0;
+    double time_phase2=0.0;
+    double start_time=0.0;
+    double end_time=0.0;
+    printf("start\n");
+    // int times=0;
+
+     //用degree做排序 大->小
+    csr.orderedCsrV  = (int*)calloc(sizeof(int), (csr.csrVSize) *2);
+    for(int i=csr.startNodeID;i<=csr.endNodeID;i++){
+            csr.orderedCsrV[i]=i;
+    }
+    quicksort_nodeID_with_degree(csr.orderedCsrV, csr.csrNodesDegree, csr.startNodeID, csr.endNodeID);
+
+    for(int sourceIDIndex = csr.startNodeID ; sourceIDIndex <= csr.endNodeID ; sourceIDIndex ++){
+        
+        int s = csr.orderedCsrV[sourceIDIndex];
+
+        // for (int s = csr.startNodeID; s <= csr.endNodeID; ++s) {
+        // if(Degree_visited[csr.csrNodesDegree[s]]>avg_degree){
+        //     break;
+        // }
+
+        if(!Degree_visited[csr.csrNodesDegree[s]] ){
+            // times++;
+            Degree_visited[csr.csrNodesDegree[s]]=true;
+            // sigma.assign(V, 0);   // Reset sigma to size V with all values 0
+            // dist.assign(V, -1);   // Reset dist to size V with all values -1
+            // delta.assign(V, 0.0f);   // Reset dist to size V with all values -1
+            // S.assign(V, vector<int>());
+            // predecessors.assign(V, vector<int>());
+            // Source_depth.assign(V, 0);;
+            // Source_path.assign(V, vector<int>(V,0));  // Reset Successors with empty vectors
+            // Source_distance.assign(V, vector<int>(V,-1));  // Reset Successors with empty vectors
+            // Source_S.resize(V, vector<vector<int>>(V,vector<int>()));
+            // Source_delta.assign(V, vector<float>(V,0.0f));
+
+            vector<vector<int>> S(V);               // S is a 2D stack
+            vector<int> sigma(V, 0);               // Sigma array
+            vector<int> dist(V, -1);                // Distance array
+            vector<float> delta(V, 0.0);           // Delta array
+            // vector<int> S_size(V, 0);              // Stack size for each level
+            queue<int> f1, f2;                     // Current and Next frontier
+            vector<vector<int>> predecessors(V);   // Predecessor list
+
+            vector<vector<int>> Source_path(V,vector<int>(V,0));    // 2D sigma_path[s][v] : number of path "source s to v"
+            vector<vector<int>> Source_distance(V,vector<int>(V,-1));   // 2D sigma_level[s][v]: number of path "source s to v"
+            vector<vector<float>> Source_delta(V,vector<float>(V,0.0));    // 2D sigma_path[s][v] : number of path "source s to v"
+            vector<int> Source_depth(V,0);  //bellman在backward時需要的depth
+            vector<int> Source_depth_temp(V,0);  //bellman在backward時需要的depth
+            vector<vector<vector<int>>> Source_S(V,vector<vector<int>>(V));     // S is a 3D stack[source][level][node]: [source的Stack][層數][點的ID]
+            int max_depth=0;
+
+
+            // printf("csrNodesDegree[%d]: %d\n",s, csr.csrNodesDegree[s]);
+
+            //D2的node的鄰居當Source，traverse完找到path以及level(distance)
+            for (int NeighborSource_index = csr.csrV[s]; NeighborSource_index < csr.csrV[s + 1] ; ++NeighborSource_index) {
+                int NeighborSourceID = csr.csrE[NeighborSource_index];
+                // printf("NeighborSourceID: %d\n",NeighborSourceID);
+                Source_path[NeighborSourceID][NeighborSourceID]=1;
+                Source_distance[NeighborSourceID][NeighborSourceID]=0;
+                f1.push(NeighborSourceID);
+
+                int level = 0;
+                //each neighborSource BFS forward phase
+                while (!f1.empty()) {
+                    while (!f1.empty()) {
+                        int traverse_ID = f1.front();
+                        f1.pop();
+                        Source_S[NeighborSourceID][level].push_back(traverse_ID);
+
+                        // Traverse neighbors in CSR
+                        for (int i = csr.csrV[traverse_ID]; i < csr.csrV[traverse_ID + 1]; ++i) {
+                            int traverse_Neighbor_ID = csr.csrE[i];
+
+                            if (Source_distance[NeighborSourceID][traverse_Neighbor_ID] < 0) {
+                                Source_distance[NeighborSourceID][traverse_Neighbor_ID] = Source_distance[NeighborSourceID][traverse_ID] + 1;
+                                f2.push(traverse_Neighbor_ID);
+                            }
+
+                            if (Source_distance[NeighborSourceID][traverse_Neighbor_ID] == Source_distance[NeighborSourceID][traverse_ID] + 1) {
+                                Source_path[NeighborSourceID][traverse_Neighbor_ID] += Source_path[NeighborSourceID][traverse_ID];
+                            }
+                        }
+                    }
+                    swap(f1, f2);
+                    level++;
+                }
+                Source_depth[NeighborSourceID]=(level-1);
+                max_depth=max(max_depth,Source_depth[NeighborSourceID]);
+                //each neighborSource BFS backward phase
+                
+
+                // S.assign(V, vector<int>());  // Reset S with empty vectors
+
+                // for(int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID){
+                //         printf("Source_path[%d]: %d \n",v_ID,Source_path[NeighborSourceID][v_ID]);
+                // }
+
+            }
+            // printf("max_depth: %d\n",max_depth);
+            Source_depth_temp=Source_depth;
+            // backward 累加 D2以及兩個D2鄰居的delta BC值
+
+            start_time=seconds();
+            while (max_depth > 0) {
+                // 遍歷所有鄰居
+                for (int i = csr.csrV[s]; i < csr.csrV[s + 1]; ++i) {
+                    int current_source = csr.csrE[i];
+
+                    if (max_depth == Source_depth_temp[current_source]) {
+                        // 處理當前 source 的節點
+                        // printf("delta[%d]\n",current_source);
+                        for (int node : Source_S[current_source][max_depth]) {
+                            for (int neighborIndex = csr.csrV[node]; neighborIndex < csr.csrV[node + 1]; ++neighborIndex) {
+                                int backneighbor_ID = csr.csrE[neighborIndex];
+
+                                if (Source_distance[current_source][backneighbor_ID] == Source_distance[current_source][node] - 1) { // Predecessor
+                                    // Source_delta[current_source][backneighbor_ID] += (1.0f + Source_delta[current_source][node]) *
+                                    //     (Source_path[current_source][backneighbor_ID]) / (float)Source_path[current_source][node];
+
+                                    // 確保 Source_distance[current_source][node] 是最小的
+                                    bool is_min_distance = true;
+                                    for (int j = csr.csrV[s]; j < csr.csrV[s + 1]; ++j) {
+                                        if (Source_distance[csr.csrE[j]][node] < Source_distance[current_source][node]) {
+                                            is_min_distance = false;
+                                            break;
+                                        }
+                                    }
+
+                                    if (is_min_distance && s != node) {
+                                        // 累加所有最小距離的路徑數
+                                        int total_min_path = 0;
+                                        for (int j = csr.csrV[s]; j < csr.csrV[s + 1]; ++j) {
+                                            if (Source_distance[csr.csrE[j]][node] == Source_distance[current_source][node]) {
+                                                total_min_path += Source_path[csr.csrE[j]][node];
+                                            }
+                                        }
+
+                                        // 正確的 delta 累加邏輯
+                                        for (int j = csr.csrV[s]; j < csr.csrV[s + 1]; ++j) {
+                                            int other_source = csr.csrE[j];
+                                            if (Source_distance[other_source][node] == Source_distance[current_source][node]) {
+                                                Source_delta[s][backneighbor_ID] += (Source_path[current_source][backneighbor_ID] / (float)total_min_path) *
+                                                    (1.0f + Source_delta[s][node]);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Source_depth_temp[current_source]--;
+                    }
+                }
+                max_depth--;
+            }
+
+            
+
+            // start_time=seconds();
+            
+            //透過前面多個degree鄰居的sigma以及level可以推敲出 D2node的path數量
+            // for(int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID){
+            //     if(v_ID==s){
+            //         Source_distance[s][s]=0;
+            //         Source_path[s][s]=1;
+            //     }else{
+            //         //Source_path[s][v_ID]    : 每個S的鄰居到v_ID的距離最小就累加。
+            //         //Source_distance[s][v_ID]: 每個S的鄰居到v_ID的距離最小。
+
+            //         int min_distance=INT32_MAX;
+            //         for (int i = csr.csrV[s]; i < csr.csrV[s+1]; ++i) { //每個S的鄰居到v_ID的距離
+            //             int current_source = csr.csrE[i];
+            //             min_distance=min(min_distance,Source_distance[current_source][v_ID]);
+            //         }
+            //         Source_distance[s][v_ID]=min_distance+1;
+
+            //         for (int i = csr.csrV[s]; i < csr.csrV[s+1]; ++i) { //每個S的鄰居到v_ID的距離
+            //             int current_source = csr.csrE[i];
+            //             if( min_distance == Source_distance[current_source][v_ID]){ //current_source距離v_ID是最短
+            //                 Source_path[s][v_ID]+=Source_path[current_source][v_ID];
+            //             }
+            //         }
+            //     }
+            // }
+
+            end_time=seconds();
+            time_phase1=end_time-start_time;
+            start_time=seconds();
+           
+
+            #pragma region make_ans
+            //************************************************ */
+            //                      對答案程式
+            //************************************************ */
+            //使用原本的D2為Source的path 以及distance檢查是否正確。
+            sigma[s] = 1;
+            dist[s] = 0;
+            f1.push(s);
+            int level = 0;
+            // BFS forward phase
+            while (!f1.empty()) {
+                while (!f1.empty()) {
+                    int traverse_ID = f1.front();
+                    f1.pop();
+                    S[level].push_back(traverse_ID);
+                    // Traverse neighbors in CSR
+                    for (int i = csr.csrV[traverse_ID]; i < csr.csrV[traverse_ID + 1]; ++i) {
+                        int traverse_Neighbor_ID = csr.csrE[i];
+                        if (dist[traverse_Neighbor_ID] < 0) {
+                            dist[traverse_Neighbor_ID] = dist[traverse_ID] + 1;
+                            f2.push(traverse_Neighbor_ID);
+                        }
+                        if (dist[traverse_Neighbor_ID] == dist[traverse_ID] + 1) {
+                            sigma[traverse_Neighbor_ID] += sigma[traverse_ID];
+                            predecessors[traverse_Neighbor_ID].push_back(traverse_ID);
+                        }
+                    }
+                }
+                swap(f1, f2);
+                level++;
+            }
+
+            //正確答案的backward
+            for (int d = level - 1; d >= 0; --d) {
+                for (int w : S[d]) {
+                    for (int v : predecessors[w]) {
+                        if(v!=s){
+                            delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
+                        }  
+                    }
+                    if (w != s) {
+                        BC_ans[w] += delta[w];
+                    }
+                }
+            }
+             #pragma endregion
+
+            end_time=seconds();
+            time_phase2=end_time-start_time;
+
+
+            //對path答案
+            // bool flag = true;
+            // for (int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID) {
+
+            //     if (sigma[v_ID] != Source_path[s][v_ID]) {
+            //         flag = false;
+            //         printf("sigma[%d]: %d  Source_path[%d][%d]: %d\n",
+            //                v_ID, sigma[v_ID], s, v_ID, Source_path[s][v_ID]);
+            //     }
+            // }
+            // if (flag)
+            //     printf("[Correct] Same path from D2!!\n");
+
+
+            //對dist答案
+            // flag = true;
+            // for (int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID) {
+
+            //     if (sigma[v_ID] != Source_path[s][v_ID]) {
+            //         flag = false;
+            //         printf("dist[%d]: %d  Source_dist[%d][%d]: %d\n",
+            //                v_ID, sigma[v_ID], s, v_ID, Source_distance[s][v_ID]);
+            //     }
+            // }
+            // if (flag)
+            //     printf("[Correct] Same dist from D2!!\n");
+            
+            // flag=true;
+            // for (int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID) {
+            //     // 取小數點後兩位，並捨棄後續位數
+            //     float delta_rounded = std::floor(delta[v_ID] * 1000) / 1000;
+            //     float source_delta_rounded = std::floor(Source_delta[s][v_ID] * 1000) / 1000;
+
+            //     if (delta_rounded != source_delta_rounded) {
+            //         flag = false;
+            //         printf("delta[%d]: %.3f  delta[%d][%d]: %.3f\n",
+            //                v_ID, delta_rounded, s, v_ID, source_delta_rounded);
+            //     }
+            // }
+            // if (flag)
+            //     printf("[Correct] Same delta from D2!!\n");
+
+           times_record[csr.csrNodesDegree[s]].phase1+=time_phase1;
+           times_record[csr.csrNodesDegree[s]].phase2+=time_phase2;
+           times_record[csr.csrNodesDegree[s]].times++;
+            // break;
+        }
+        
+        
+    }
+    for(int i=0;i<(csr.maxDegree+1);i++){
+        if(times_record[i].times!=0){
+            times_record[i].phase1/=times_record[i].times;
+            times_record[i].phase2/=times_record[i].times;
+            printf("D[%d] p1:%.5f p2:%.5f ratio:%.5f\n",i,times_record[i].phase1,times_record[i].phase2,times_record[i].phase2/times_record[i].phase1);
+        
+        }
+        
+    }
+    
+}
+
 
