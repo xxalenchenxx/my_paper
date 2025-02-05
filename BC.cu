@@ -80,7 +80,7 @@ void check_ans(std::vector<float> ans, std::vector<float> my_ans);
 void brandes_ORIGIN_for_Seq( CSR& csr, int V, vector<float> &BC);
 void brandes_with_predecessors(CSR& csr, int V, float* BC);
 void brandes_with_predecessors_dynamic_check_ans(CSR csr, int V,int sourceID_test, vector<float> BC_ckeck);
-
+//CC範例
 void computeCC_ans(struct CSR* _csr, int* _CCs);
 void compute_diameter(CSR* _csr);
 void Seq_multi_source_brandes_ordered( CSR& csr, int max_multi, vector<float> &BC);
@@ -94,11 +94,14 @@ void Seq_MS_brandes_me_D1_AP(CSR* csr, int max_multi, vector<float> &BC);
 void brandes_MS_Me_AP_D1( CSR& csr, int max_multi, float* BC);
 
 //test 程式
-void computeCC_shareBased_oneTraverse(struct CSR* _csr, int* _CCs);
 void computeBC_shareBased_Successor_SS( CSR* _csr, float* _BCs);
 void computeBC_shareBased_Successor_SS_edge_update( CSR* _csr, float* _BCs);
 void computeBC_shareBased_Successor_SS_test( CSR* _csr, float* _BCs);
 void computeBC_shareBased_Successor_MS( CSR* _csr, float* _BCs);
+
+//DMF 延伸的演算法
+void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs);
+
 
 void printbinary(int data,int mappingcount){
     int count = mappingcount;
@@ -126,6 +129,7 @@ int main(int argc, char* argv[]){
     struct Graph* graph = buildGraph(datasetPath);
     struct CSR* csr     = createCSR(graph);
 
+    //答案專區
     vector<float> ans(csr->csrVSize,0.0);
     int *ans_CC= (int*)calloc(csr->csrVSize, sizeof(int));
     int *my_CC= (int*)calloc(csr->csrVSize, sizeof(int));
@@ -159,8 +163,8 @@ int main(int argc, char* argv[]){
     multi_time1 = seconds();
     // computeCC_ans(csr,ans_CC);
 
-    brandes_with_predecessors(*csr,csr->csrVSize,ans_para);
-    
+    // brandes_with_predecessors(*csr,csr->csrVSize,ans_para);
+    computeBC_DMFBased_Sequential(*csr,ans_para);
 
     // computeBC_shareBased_Successor_SS_test(csr,ans_para2);
     // computeBC_shareBased_Successor_MS(csr,ans_para2);
@@ -177,7 +181,7 @@ int main(int argc, char* argv[]){
     // Seq_multi_source_brandes( *csr , max_multi , my_BC );
 
     mymethod_time1 = seconds();
-    computeBC_shareBased_Successor_SS(csr,ans_para2);
+    // computeBC_shareBased_Successor_SS(csr,ans_para2);
     // computeBC_shareBased_Successor_SS_edge_update(csr,ans_para2);
     // mymethod_time2 = seconds();
     printf("done 3\n");
@@ -518,6 +522,123 @@ void brandes_ORIGIN_for_Seq(CSR& csr, int V, std::vector<float>& BC) {
 #pragma endregion
 
 
+//************************************************ */
+//                   循序程式 DMF-延伸
+//************************************************ */
+
+void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs){
+    // Allocate memory for BFS data structures
+    
+
+    // vector<vector<int>> Source_path(V,vector<int>(V,0));    // 2D sigma_path[s][v] : number of path "source s to v"
+    // vector<vector<int>> Source_distance(V,vector<int>(V,-1));   // 2D sigma_level[s][v]: number of path "source s to v"
+    // vector<vector<float>> Source_delta(V,vector<float>(V,0.0));    // 2D sigma_path[s][v] : number of path "source s to v"
+    // vector<int> Source_depth(V,0);  //bellman在backward時需要的depth
+    // vector<int> Source_depth_temp(V,0);  //bellman在backward時需要的depth
+    // vector<vector<vector<int>>> Source_S(V,vector<vector<int>>(V));     // S is a 3D stack[source][level][node]: [source的Stack][層數][點的ID]
+    
+    // Allocate memory for vertex coverage
+    bool *edge_covered = (bool*)calloc(sizeof(bool), csr.csrESize); //確認edge已被cover到
+    bool *total_VC_List      = (bool*) calloc(sizeof(bool), csr.csrVSize); //確認nodeID被標記為主動cover
+    int *VC_List      = (int*) calloc(sizeof(int), csr.csrVSize); //nodeID被標記為cover的點集合
+    int *nonVC_List      = (int*) calloc(sizeof(int), csr.csrVSize); //nodeID被標記為非VCcovered的點集合
+    int  VC_List_size  = 0, nonVC_List_size = 0;
+
+    //找出avg_degree
+    int V=csr.csrVSize;
+    float avg_degree= (float)(csr.csrESize/V);
+    printf("start\n avg_degree: %.2f\n",avg_degree);
+
+
+    
+    //用degree做排序 大->小
+    csr.orderedCsrV  = (int*)calloc(sizeof(int), (csr.csrVSize));
+    for(int i=csr.startNodeID;i<=csr.endNodeID;i++){
+            csr.orderedCsrV[i]=i;
+    }
+    quicksort_nodeID_with_degree(csr.orderedCsrV, csr.csrNodesDegree, csr.startNodeID, csr.endNodeID);
+    
+    //找出VC點以及非VC點
+    //degree大於avg_degree標為VC，並記錄該edge為covered
+    int avg_degree_nodeStartIndex=0;
+    for(int index=csr.startNodeID ; index<=csr.endNodeID ; index++){
+        int sourceID = csr.orderedCsrV[index];
+        if(csr.csrNodesDegree[sourceID]<=avg_degree){
+            avg_degree_nodeStartIndex=index;
+            break;
+        }
+
+        total_VC_List[sourceID]=1;
+        VC_List[VC_List_size++]=sourceID;
+        //記錄該edge為coverd
+        for(int neighborIndex = csr.csrV[sourceID] ; neighborIndex < csr.csrV[sourceID + 1] ; neighborIndex ++){
+            int neighborNodeID = csr.csrE[neighborIndex];
+            edge_covered[neighborIndex]=true;
+            for(int sIndex = csr.csrV[neighborNodeID] ; sIndex < csr.csrV[neighborNodeID + 1] ; sIndex ++){
+                if(csr.csrE[sIndex]==sourceID){
+                    edge_covered[sIndex]=true;
+                    break;
+                }
+            }
+        }
+    }
+
+    //degree <= avg 的 node找VC，如果edge都有covered 則為 nonVC
+    for(int index=avg_degree_nodeStartIndex ; index<=csr.endNodeID ; index++){
+        int sourceID = csr.orderedCsrV[index];
+        bool nonVC_flag = true;
+        for(int neighborIndex = csr.csrV[sourceID] ; neighborIndex < csr.csrV[sourceID + 1] ; neighborIndex ++){
+            int neighborNodeID = csr.csrE[neighborIndex];
+            if(!edge_covered[neighborIndex]){
+                edge_covered[neighborIndex]=true;
+                total_VC_List[sourceID]=1;
+                
+                if(nonVC_flag)
+                    VC_List[VC_List_size++]=sourceID;
+                
+                nonVC_flag=false;
+                for(int sIndex = csr.csrV[neighborNodeID] ; sIndex < csr.csrV[neighborNodeID + 1] ; sIndex ++){
+                    if(csr.csrE[sIndex]==sourceID){
+                        edge_covered[sIndex]=true;
+                        break;
+                    }
+                }
+
+            }
+        }
+        if(nonVC_flag){
+            nonVC_List[nonVC_List_size++] = sourceID;
+        }
+    }
+
+    //紀錄nonVC鄰居的長度
+    
+    #pragma region printvalue
+    // for (int i=0;i<csr.csrESize;i++) {
+    //     printf("edge_covered[%d]: (%d)\n",i,edge_covered[i]);
+    // }
+
+    // for (int i= csr.startNodeID;i<=csr.endNodeID;i++) {
+    //     printf("total_VC_List[%d]: (%d)\n",i,total_VC_List[i]);
+    // }
+
+    // for (int i= 0;i<VC_List_size;i++) {
+    //     printf("VC_List[%d]: (%d)\n",i,VC_List[i]);
+    // }
+
+    // for (int i= 0;i<nonVC_List_size;i++) {
+    //     printf("nonVC_List[%d]: (%d)\n",i,nonVC_List[i]);
+    // }
+
+    printf("VC_List_size   : (%d) (%.2f)\n",VC_List_size,(float)VC_List_size/V);
+    printf("nonVC_List_size: (%d) (%.2f)\n",nonVC_List_size,(float)nonVC_List_size/V);
+    #pragma endregion
+
+    //VC List點先做BFS brandes的算法
+
+    //nonVC List點使用DMF的算法完成BC算法
+    
+}
 
 
 //循序_brandes切D1與AP
@@ -582,7 +703,7 @@ void Seq_MS_brandes_me_D1_AP(CSR* csr, int max_multi, vector<float> &BC) {
 
 
 //************************************************ */
-//                   循序_brandes 測試
+//                   循序_brandes + sharedBased 測試
 //************************************************ */
 
 void brandes_with_predecessors(CSR& csr, int V, float* BC) {
