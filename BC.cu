@@ -539,7 +539,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs){
     
     // Allocate memory for vertex coverage
     bool *edge_covered = (bool*)calloc(sizeof(bool), csr.csrESize); //確認edge已被cover到
-    bool *total_VC_List      = (bool*) calloc(sizeof(bool), csr.csrVSize); //確認nodeID被標記為主動cover
+    // bool *total_VC_List      = (bool*) calloc(sizeof(bool), csr.csrVSize); //確認nodeID被標記為主動cover
     int *VC_List      = (int*) calloc(sizeof(int), csr.csrVSize); //nodeID被標記為cover的點集合
     int *nonVC_List      = (int*) calloc(sizeof(int), csr.csrVSize); //nodeID被標記為非VCcovered的點集合
     int  VC_List_size  = 0, nonVC_List_size = 0;
@@ -568,7 +568,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs){
             break;
         }
 
-        total_VC_List[sourceID]=1;
+        // total_VC_List[sourceID]=1;
         VC_List[VC_List_size++]=sourceID;
         //記錄該edge為coverd
         for(int neighborIndex = csr.csrV[sourceID] ; neighborIndex < csr.csrV[sourceID + 1] ; neighborIndex ++){
@@ -591,7 +591,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs){
             int neighborNodeID = csr.csrE[neighborIndex];
             if(!edge_covered[neighborIndex]){
                 edge_covered[neighborIndex]=true;
-                total_VC_List[sourceID]=1;
+                // total_VC_List[sourceID]=1;
                 
                 if(nonVC_flag)
                     VC_List[VC_List_size++]=sourceID;
@@ -611,13 +611,35 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs){
         }
     }
 
-    //紀錄nonVC鄰居的長度
-    
-    #pragma region printvalue
-    // for (int i=0;i<csr.csrESize;i++) {
-    //     printf("edge_covered[%d]: (%d)\n",i,edge_covered[i]);
-    // }
+    free(edge_covered);
 
+    //紀錄nonVC鄰居的長度
+    int nonVC_Neighbor_size=0;
+    bool *nonVC_Neighbor_boolList    = (bool*) calloc(sizeof(bool), csr.csrVSize); //nodeID為需要紀錄sigma以及delta的點，以及map依據。
+    int *nonVC_NeighborID_List     = (int*) calloc(sizeof(int), csr.csrVSize); //nodeID為需要紀錄sigma以及delta的點，以及map依據。
+    int *nonVC_Neighbor_ID2Index     = (int*) calloc(sizeof(int), csr.csrVSize); //nodeID map回 nonVC_NeighborID_List的Index
+    memset(nonVC_Neighbor_ID2Index, -1 ,csr.csrVSize*sizeof(int));
+    
+    for(int nonVIndex=0;nonVIndex<nonVC_List_size;nonVIndex++){
+        int nonVC_ID = nonVC_List[nonVIndex];
+        for(int neighborIndex = csr.csrV[nonVC_ID] ; neighborIndex < csr.csrV[nonVC_ID + 1] ; neighborIndex ++){
+            int neighborNodeID = csr.csrE[neighborIndex];
+            nonVC_Neighbor_boolList[neighborNodeID]= true;
+        }
+    }
+
+    for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+        if(nonVC_Neighbor_boolList[nodeID]){
+            nonVC_NeighborID_List[nonVC_Neighbor_size]=nodeID;
+            nonVC_Neighbor_ID2Index[nodeID]=nonVC_Neighbor_size;
+            nonVC_Neighbor_size++;
+        }
+    }
+
+    free(nonVC_Neighbor_boolList);
+
+    #pragma region printvalue
+    
     // for (int i= csr.startNodeID;i<=csr.endNodeID;i++) {
     //     printf("total_VC_List[%d]: (%d)\n",i,total_VC_List[i]);
     // }
@@ -630,14 +652,35 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs){
     //     printf("nonVC_List[%d]: (%d)\n",i,nonVC_List[i]);
     // }
 
-    printf("VC_List_size   : (%d) (%.2f)\n",VC_List_size,(float)VC_List_size/V);
-    printf("nonVC_List_size: (%d) (%.2f)\n",nonVC_List_size,(float)nonVC_List_size/V);
+    // for (int i= 0;i<nonVC_Neighbor_size;i++) {
+    //     printf("nonVC_NeighborID_List[%d]: (%d)\n",i,nonVC_NeighborID_List[i]);
+    // }
+
+    // for (int i= csr.startNodeID;i<=csr.endNodeID;i++) {
+    //     printf("nonVC_Neighbor_ID2Index[%d]: (%d)\n",i,nonVC_Neighbor_ID2Index[i]);
+    // }
+
+    // printf("VC_List_size   : (%d) (%.2f)\n",VC_List_size,(float)VC_List_size/V);
+    // printf("nonVC_List_size: (%d) (%.2f)\n",nonVC_List_size,(float)nonVC_List_size/V);
+    // printf("nonVC_Neighbor_size   : (%d) (%.2f)\n",nonVC_Neighbor_size,(float)nonVC_Neighbor_size/V);
     #pragma endregion
 
     //VC List點先做BFS brandes的算法
+    for (auto index = 0; index<VC_List_size ; index++ ) {
+        int SourceID = VC_List[index];
+        //forward
 
+        //backward
+
+    }
     //nonVC List點使用DMF的算法完成BC算法
-    
+    for (auto index = 0; index<nonVC_Neighbor_size ; index++ ) {
+        int SourceID = nonVC_NeighborID_List[index];
+        //forward
+
+        //backward
+        
+    }
 }
 
 
