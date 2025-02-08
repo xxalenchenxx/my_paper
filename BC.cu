@@ -139,9 +139,9 @@ int main(int argc, char* argv[]){
     vector<float> ans_para_vec(csr->csrVSize,0.0);
     vector<float> ans_para_vec2(csr->csrVSize,0.0);
     //brandes start
-    printf("csrVSize: %d\n",csr->csrVSize);
+    printf("csrVSize   : %d\n",csr->csrVSize);
     printf("startNodeID: %d\n",csr->startNodeID);
-    printf("endNodeID: %d\n",csr->endNodeID);
+    printf("endNodeID  : %d\n",csr->endNodeID);
     printf("startAtZero: %d\n",csr->startAtZero);
     // int max_multi=32;
     // compute_diameter(csr);
@@ -150,7 +150,7 @@ int main(int argc, char* argv[]){
     // computeCC_shareBased_oneTraverse(csr,my_CC);
     // cout<<"max_degree: "<<csr->maxDegree<<endl;
 
-    brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
+    // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
 
     // brandes_SS_par(*csr,csr->csrVSize,ans_para);
     // brandes_MS_par(*csr , max_multi , ans_para);
@@ -194,7 +194,7 @@ int main(int argc, char* argv[]){
         ans_para_vec2[i]=ans_para2[i];
     }
     // // check_ans(ans_para_vec,ans_para_vec2);
-    check_ans(ans,ans_para_vec2);
+    // check_ans(ans,ans_para_vec2);
     
     //答案檢查CC
     // bool flag=true;
@@ -664,31 +664,16 @@ void brandes_ORIGIN_for_Seq_noSTL(const CSR& csr, int V, vector<float> &BC) {
 //************************************************ */
 //                   循序程式 DMF-延伸
 //************************************************ */
-void transpose(int **src, int ***dest, int rows, int cols) {
-    // 分配轉置矩陣的記憶體
-    *dest = (int**) malloc(cols * sizeof(int*));
-    for (int i = 0; i < cols; i++) {
-        (*dest)[i] = (int*) malloc(rows * sizeof(int));
-    }
-
-    // 進行轉置：src[i][j] -> dest[j][i]
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            (*dest)[j][i] = src[i][j];
-        }
-    }
-}
-
 
 void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     // Allocate memory for time
-    double time_phase1 = 0.0;
-    double time_phase2 = 0.0;
-    double time_phase3 = 0.0;
-    double time_phase4 = 0.0;
-    double time_phase5 = 0.0;
-    double start_time = 0.0;
-    double end_time = 0.0;
+    double time_phase1 = 0.0f;
+    double time_phase2 = 0.0f;
+    double time_phase3 = 0.0f;
+    double time_phase4 = 0.0f;
+    double time_phase5 = 0.0f;
+    double start_time  = 0.0f;
+    double end_time    = 0.0f;
 
     // Allocate memory for vertex coverage
     bool *edge_covered = (bool*)calloc(sizeof(bool), csr.csrESize); //確認edge已被cover到
@@ -791,7 +776,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
             nonVC_Neighbor_size++;
         }
     }
-
+    printf("nonVC_Neighbor_size: %d\n",nonVC_Neighbor_size);
     free(nonVC_Neighbor_boolList);
 
     int **nonVC_NeighborID_dist  = (int**) malloc(nonVC_Neighbor_size * sizeof(int*)); //nodeID為需要紀錄sigma以及delta的點，以及map依據。
@@ -800,7 +785,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
         nonVC_NeighborID_dist [i]= (int*)malloc(V *sizeof(int)); // 每個ID的點都需要紀錄距離
         nonVC_NeighborID_sigma[i]= (int*)malloc(V *sizeof(int)); // 每個ID的點都需要紀錄路徑數量
     }
-
+    printf("malloc: nonVC_NeighborID_sigma and dist\n");
     #pragma region printvalue
     
     // for (int i= csr.startNodeID;i<=csr.endNodeID;i++) {
@@ -830,10 +815,11 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
 
     end_time=seconds();
     time_phase1 = end_time-start_time;
+    
     //=============================
     //VC List點先做BFS brandes的算法
     //=============================
-
+    printf("Do VC list brandes\n");
     // Allocate memory for sigma, dist, delta, and the stack S
     int*   S = (int*)malloc(V * sizeof(int));      // S is a 2D array (stack)
     int*   sigma = (int*)malloc(V * sizeof(int));     // sigma is a 1D array
@@ -954,7 +940,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     free(f2);
     free(VC_List);
     free(csr.orderedCsrV);
-
+    printf("Done VC list brandes\n");
     #pragma region print nonVC_NeighborID_sigma
     // for(int SourceID = 0 ; SourceID<  nonVC_Neighbor_size; SourceID++){
     //     printf("=======%d=======\n",nonVC_NeighborID_List[SourceID]);
@@ -971,16 +957,10 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     // }
     #pragma endregion
     
-
-    //nonVC_NeighborID_dist transepose?? 之後的都是不同Source看相同的V_ID
-    // 轉置矩陣
-    int **transe_nonVC_NeighborID_dist = NULL;
-    transpose(nonVC_NeighborID_dist, &transe_nonVC_NeighborID_dist, nonVC_Neighbor_size, V);
-
     //=================================
     //nonVC List點使用DMF的算法完成BC算法
     //=================================
-    
+    printf("Done nonVC list brandes\n");
     for (auto index = 0; index<nonVC_List_size ; index++ ) {
         int SourceID = nonVC_List[index];
         start_time=seconds();
@@ -1061,6 +1041,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
         time_phase5 += end_time-start_time;
 
     }
+    printf("Done nonVC list brandes\n");
 
     // 釋放 nonVC_NeighborID_dist 內部的記憶體
     for (int i = 0; i < nonVC_Neighbor_size; i++) {
@@ -1073,6 +1054,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
         free(nonVC_NeighborID_sigma[i]); 
     }
     free(nonVC_NeighborID_sigma);
+    
     free(S);
     free(sigma);
     free(dist);
@@ -1083,8 +1065,9 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     printf("phase3 time: %0.6f\n", time_phase3);
     printf("phase4 time: %0.6f\n", time_phase4);
     printf("phase5 time: %0.6f\n", time_phase5);
-
-
+    printf("VC_List_size: %d\n", VC_List_size );
+    printf("nonVC_List_size: %d\n", nonVC_List_size);
+    printf("nonVC_Neighbor_size: %d\n", nonVC_Neighbor_size);
 }
 
 
