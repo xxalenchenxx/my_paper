@@ -77,6 +77,7 @@ inline void resetQueue(struct qQueue* _Q){
 
 //原版brandes
 void check_ans(std::vector<float> ans, std::vector<float> my_ans);
+void compute_graph_degree( struct CSR& csr);
 void brandes_ORIGIN_for_Seq( CSR& csr, int V, vector<float> &BC);
 void brandes_with_predecessors(CSR& csr, int V, float* BC);
 void brandes_with_predecessors_dynamic_check_ans(CSR csr, int V,int sourceID_test, vector<float> BC_ckeck);
@@ -165,7 +166,7 @@ int main(int argc, char* argv[]){
     // computeCC_ans(csr,ans_CC);
 
     // brandes_with_predecessors(*csr,csr->csrVSize,ans_para);
-    computeBC_DMFBased_Sequential(*csr,ans_para2);
+    // computeBC_DMFBased_Sequential(*csr,ans_para2);
 
     // computeBC_shareBased_Successor_SS_test(csr,ans_para2);
     // computeBC_shareBased_Successor_MS(csr,ans_para2);
@@ -208,6 +209,7 @@ int main(int argc, char* argv[]){
     //     cout<<"[CORRECT] CC!!!\n";
     // }
 
+    compute_graph_degree(*csr);
 
     // #ifdef DEBUG
     //     for(auto i=0;i<csr->csrVSize;i++){
@@ -331,6 +333,23 @@ void quicksort_nodeID_with_degree(int* _nodes, int* _nodeDegrees, int _left, int
     quicksort_nodeID_with_degree(_nodes, _nodeDegrees, largerAgent + 1, _right);
 }
 
+
+void compute_graph_degree( struct CSR& csr){
+    int *degree_List      = (int*) calloc(sizeof(int), csr.csrVSize);
+    float avg_degree= (float)(csr.csrESize/csr.csrVSize);
+    printf("avg_degree: %.2f\n",avg_degree);
+    for(int i=csr.startNodeID;i<=csr.endNodeID;i++){
+        degree_List[csr.csrNodesDegree[i]]++;
+    }
+
+    for(int i=0;i<csr.csrVSize;i++){
+        if(i>10)
+            break;
+        if(degree_List[i] )
+            printf("degree[%d]: %d\t%.2f%\n", i,degree_List[i], (float)degree_List[i]/csr.csrVSize*100);
+    }
+
+}
 
 
 //************************************************ */
@@ -776,8 +795,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
             nonVC_Neighbor_size++;
         }
     }
-    printf("nonVC_Neighbor_size: %d\n",nonVC_Neighbor_size);
-    free(nonVC_Neighbor_boolList);
+    // printf("nonVC_Neighbor_size: %d\n",nonVC_Neighbor_size);
 
     int **nonVC_NeighborID_dist  = (int**) malloc(nonVC_Neighbor_size * sizeof(int*)); //nodeID為需要紀錄sigma以及delta的點，以及map依據。
     int **nonVC_NeighborID_sigma = (int**) malloc(nonVC_Neighbor_size * sizeof(int*)); //nodeID為需要紀錄sigma以及delta的點，以及map依據。
@@ -785,7 +803,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
         nonVC_NeighborID_dist [i]= (int*)malloc(V *sizeof(int)); // 每個ID的點都需要紀錄距離
         nonVC_NeighborID_sigma[i]= (int*)malloc(V *sizeof(int)); // 每個ID的點都需要紀錄路徑數量
     }
-    printf("malloc: nonVC_NeighborID_sigma and dist\n");
+    // printf("malloc: nonVC_NeighborID_sigma and dist\n");
     #pragma region printvalue
     
     // for (int i= csr.startNodeID;i<=csr.endNodeID;i++) {
@@ -819,7 +837,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     //=============================
     //VC List點先做BFS brandes的算法
     //=============================
-    printf("Do VC list brandes\n");
+    // printf("Do VC list brandes\n");
     // Allocate memory for sigma, dist, delta, and the stack S
     int*   S = (int*)malloc(V * sizeof(int));      // S is a 2D array (stack)
     int*   sigma = (int*)malloc(V * sizeof(int));     // sigma is a 1D array
