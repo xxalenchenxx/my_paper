@@ -151,7 +151,7 @@ int main(int argc, char* argv[]){
     // computeCC_shareBased_oneTraverse(csr,my_CC);
     // cout<<"max_degree: "<<csr->maxDegree<<endl;
 
-    // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
+    brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
 
     // brandes_SS_par(*csr,csr->csrVSize,ans_para);
     // brandes_MS_par(*csr , max_multi , ans_para);
@@ -195,7 +195,7 @@ int main(int argc, char* argv[]){
         ans_para_vec2[i]=ans_para2[i];
     }
     // // check_ans(ans_para_vec,ans_para_vec2);
-    // check_ans(ans,ans_para_vec2);
+    check_ans(ans,ans_para_vec2);
     
     //答案檢查CC
     // bool flag=true;
@@ -723,7 +723,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     int avg_degree_nodeStartIndex=0;
     for(int index=csr.startNodeID ; index<=csr.endNodeID ; index++){
         int sourceID = csr.orderedCsrV[index];
-        if(csr.csrNodesDegree[sourceID]<=2){
+        if(csr.csrNodesDegree[sourceID]<= avg_degree){
             avg_degree_nodeStartIndex=index;
             break;
         }
