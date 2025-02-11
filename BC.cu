@@ -166,7 +166,7 @@ int main(int argc, char* argv[]){
     // computeCC_ans(csr,ans_CC);
 
     // brandes_with_predecessors(*csr,csr->csrVSize,ans_para);
-    // computeBC_DMFBased_Sequential(*csr,ans_para2);
+    computeBC_DMFBased_Sequential(*csr,ans_para2);
 
     // computeBC_shareBased_Successor_SS_test(csr,ans_para2);
     // computeBC_shareBased_Successor_MS(csr,ans_para2);
@@ -209,7 +209,7 @@ int main(int argc, char* argv[]){
     //     cout<<"[CORRECT] CC!!!\n";
     // }
 
-    compute_graph_degree(*csr);
+    // compute_graph_degree(*csr);
 
     // #ifdef DEBUG
     //     for(auto i=0;i<csr->csrVSize;i++){
@@ -704,7 +704,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     //找出avg_degree
     int V=csr.csrVSize;
     float avg_degree= (float)(csr.csrESize/V);
-    printf("avg_degree: %.2f\n",avg_degree);
+    // printf("avg_degree: %.2f\n",avg_degree);
 
 
     start_time=seconds();
@@ -723,7 +723,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     int avg_degree_nodeStartIndex=0;
     for(int index=csr.startNodeID ; index<=csr.endNodeID ; index++){
         int sourceID = csr.orderedCsrV[index];
-        if(csr.csrNodesDegree[sourceID]<=avg_degree){
+        if(csr.csrNodesDegree[sourceID]<=2){
             avg_degree_nodeStartIndex=index;
             break;
         }
@@ -958,7 +958,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     free(f2);
     free(VC_List);
     free(csr.orderedCsrV);
-    printf("Done VC list brandes\n");
+    // printf("Done VC list brandes\n");
     #pragma region print nonVC_NeighborID_sigma
     // for(int SourceID = 0 ; SourceID<  nonVC_Neighbor_size; SourceID++){
     //     printf("=======%d=======\n",nonVC_NeighborID_List[SourceID]);
@@ -978,7 +978,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     //=================================
     //nonVC List點使用DMF的算法完成BC算法
     //=================================
-    printf("Done nonVC list brandes\n");
+    // printf("Done nonVC list brandes\n");
     for (auto index = 0; index<nonVC_List_size ; index++ ) {
         int SourceID = nonVC_List[index];
         start_time=seconds();
@@ -1059,7 +1059,7 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
         time_phase5 += end_time-start_time;
 
     }
-    printf("Done nonVC list brandes\n");
+    // printf("Done nonVC list brandes\n");
 
     // 釋放 nonVC_NeighborID_dist 內部的記憶體
     for (int i = 0; i < nonVC_Neighbor_size; i++) {
