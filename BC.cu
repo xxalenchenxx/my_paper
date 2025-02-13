@@ -100,8 +100,11 @@ void computeBC_shareBased_Successor_SS_edge_update( CSR* _csr, float* _BCs);
 void computeBC_shareBased_Successor_SS_test( CSR* _csr, float* _BCs);
 void computeBC_shareBased_Successor_MS( CSR* _csr, float* _BCs);
 
+//DMF演算法
+void computeBC_DMF_2018(struct CSR& csr,float* _BCs);
 //DMF 延伸的演算法
-void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs);
+void computeBC_DMFBased_Sequential_Vsquared(struct CSR& csr,float* _BCs);
+void computeBC_DMFBased_Sequential_save_memory(struct CSR& csr,float* _BCs);
 
 
 void printbinary(int data,int mappingcount){
@@ -151,7 +154,7 @@ int main(int argc, char* argv[]){
     // computeCC_shareBased_oneTraverse(csr,my_CC);
     // cout<<"max_degree: "<<csr->maxDegree<<endl;
 
-    brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
+    // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
 
     // brandes_SS_par(*csr,csr->csrVSize,ans_para);
     // brandes_MS_par(*csr , max_multi , ans_para);
@@ -166,7 +169,9 @@ int main(int argc, char* argv[]){
     // computeCC_ans(csr,ans_CC);
 
     // brandes_with_predecessors(*csr,csr->csrVSize,ans_para);
-    computeBC_DMFBased_Sequential(*csr,ans_para2);
+    // computeBC_DMFBased_Sequential_Vsquared(*csr,ans_para2);
+    // computeBC_DMFBased_Sequential_save_memory(*csr,ans_para2);
+    computeBC_DMF_2018(*csr,ans_para2);
 
     // computeBC_shareBased_Successor_SS_test(csr,ans_para2);
     // computeBC_shareBased_Successor_MS(csr,ans_para2);
@@ -195,7 +200,7 @@ int main(int argc, char* argv[]){
         ans_para_vec2[i]=ans_para2[i];
     }
     // // check_ans(ans_para_vec,ans_para_vec2);
-    check_ans(ans,ans_para_vec2);
+    // check_ans(ans,ans_para_vec2);
     
     //答案檢查CC
     // bool flag=true;
@@ -684,7 +689,9 @@ void brandes_ORIGIN_for_Seq_noSTL(const CSR& csr, int V, vector<float> &BC) {
 //                   循序程式 DMF-延伸
 //************************************************ */
 
-void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
+
+
+void computeBC_DMFBased_Sequential_Vsquared(struct CSR& csr,float* _BCs) {
     // Allocate memory for time
     double time_phase1 = 0.0f;
     double time_phase2 = 0.0f;
@@ -978,7 +985,9 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     //=================================
     //nonVC List點使用DMF的算法完成BC算法
     //=================================
-    // printf("Done nonVC list brandes\n");
+    // printf("Do nonVC list brandes\n");
+    #pragma region nonVC_NeighborID_sigma
+    
     for (auto index = 0; index<nonVC_List_size ; index++ ) {
         int SourceID = nonVC_List[index];
         start_time=seconds();
@@ -1059,6 +1068,8 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
         time_phase5 += end_time-start_time;
 
     }
+    
+    #pragma endregion 
     // printf("Done nonVC list brandes\n");
 
     // 釋放 nonVC_NeighborID_dist 內部的記憶體
@@ -1087,6 +1098,723 @@ void computeBC_DMFBased_Sequential(struct CSR& csr,float* _BCs) {
     printf("nonVC_List_size: %d\n", nonVC_List_size);
     printf("nonVC_Neighbor_size: %d\n", nonVC_Neighbor_size);
 }
+
+void computeBC_DMF_2018(struct CSR& csr,float* _BCs) {
+    // Allocate memory for time
+    double time_phase1 = 0.0f;
+    double time_phase2 = 0.0f;
+    double time_phase3 = 0.0f;
+    double time_phase4 = 0.0f;
+    double time_phase5 = 0.0f;
+    double start_time  = 0.0f;
+    double end_time    = 0.0f;
+
+    int DMFnode=0;
+
+    // Allocate memory for vertex coverage
+    int V=csr.csrVSize;
+    bool *Vertex_computed = (bool*)calloc(sizeof(bool), csr.csrESize); //確認node已被計算過BC值
+
+    //找出avg_degree
+    int avg_degree= (int)ceil(csr.csrESize/V);
+    printf("avg_degree: %d\n",avg_degree);
+
+    // Allocate memory for sigma, dist, delta, and the stack S
+    int*   S     = (int*)malloc(V * sizeof(int));      // S is a 2D array (stack)
+    int*   Source_sigma = (int*)malloc(V * sizeof(int));     // sigma is a 1D array
+    int*   Source_dist  = (int*)malloc(V * sizeof(int));      // dist is a 1D array
+    int**   sigma = (int**)malloc((avg_degree) * sizeof(int*));     // sigma is a 2D array
+    int**   dist  = (int**)malloc((avg_degree) * sizeof(int*));     // sigma is a 2D array
+    for (int i = 0; i < avg_degree; i++) {
+        dist [i] = (int*)malloc(V *sizeof(int)); // 每個ID的點都需要紀錄距離
+        sigma[i] = (int*)malloc(V *sizeof(int)); // 每個ID的點都需要紀錄路徑數量
+    }
+    
+
+    float* delta = (float*)malloc(V * sizeof(float)); // delta is a 1D array
+    int*   f1 = (int*)malloc(V * sizeof(int));
+    int*   f2 = (int*)malloc(V * sizeof(int));
+    int    f1_indicator=0;
+    int    f2_indicator=0;
+    int    S_indicator =0;
+
+    //用degree做排序 大->小
+    csr.orderedCsrV  = (int*)calloc(sizeof(int), V);
+    memset(csr.orderedCsrV, -1, sizeof(int) * V);
+    for(int i=csr.startNodeID;i<=csr.endNodeID;i++){
+            csr.orderedCsrV[i]=i;
+    }
+    quicksort_nodeID_with_degree(csr.orderedCsrV, csr.csrNodesDegree, csr.startNodeID, csr.endNodeID);
+
+    int othernodeStart=0;
+    for(int i=csr.endNodeID;i>=csr.startNodeID;i--){
+        int SourceID = csr.orderedCsrV[i];
+
+        if(csr.csrNodesDegree[SourceID]==1) continue;
+
+        //如果SourceID的degree大於avg_degree，不適合DMF定理
+        if(csr.csrNodesDegree[SourceID] > 2){ //DMF只做到degree 2
+            othernodeStart=i;
+            break;
+        }
+
+        
+        //檢查SourceID的鄰居是否有被計算過了? 有的話就不做DMF，直接做BFS。
+        bool N_flag =false;
+        for(int neighborIndex = csr.csrV[SourceID] ; neighborIndex < csr.csrV[SourceID + 1] ; neighborIndex ++){
+            if(Vertex_computed[csr.csrE[neighborIndex]]){
+               N_flag=true;
+               break; 
+            }
+        }
+        
+        //做BFS先跳過
+        //檢查SourceID是否有被計算過了?
+        if(N_flag || Vertex_computed[SourceID]) continue;
+        
+        //這個Source
+        Vertex_computed[SourceID]=true;
+        DMFnode++;
+
+        //計算SourceID鄰居的dist以及sigma (forward)
+        for(int NeighborSource_index = csr.csrV[SourceID]; NeighborSource_index < csr.csrV[SourceID + 1] ; ++NeighborSource_index) {
+            int NeighborSourceID = csr.csrE[NeighborSource_index];
+            Vertex_computed[NeighborSourceID]=true;
+            // printf("NeighborSourceID: %d\n",NeighborSourceID);
+
+            start_time=seconds();
+
+            //forward
+            int NOneighbor= (NeighborSource_index-csr.csrV[SourceID]); //從0開始記錄鄰居的dist和sigma
+            for (int i = 0; i < V; i++) {
+                sigma[NOneighbor][i] =  0;
+                dist[NOneighbor][i]  = -1;
+                delta[i] = 0.0f;
+            }
+
+
+            sigma[NOneighbor][NeighborSourceID] = 1;
+            dist[NOneighbor][NeighborSourceID]  = 0;
+            f1_indicator    = 0;
+            f2_indicator    = 0;
+            S_indicator     = 0;
+            // Re-initialize current_queue
+            f1[f1_indicator++] = NeighborSourceID;
+            int level = 0;
+            while (f1_indicator>0) { 
+            // printf("level: %d\n",level);
+
+                // Allocate new memory for next_queue in each iteration
+                int* currentQueue;
+                int* nextQueue;
+                if(level% 2 == 0){
+                    currentQueue = f1;
+                    nextQueue = f2;
+                }
+                else{
+                    currentQueue = f2;
+                    nextQueue = f1;
+                }
+
+                for(int v=0; v<f1_indicator; v++) {
+                    int u = currentQueue[v];
+                    S[S_indicator++] = u;  // Put node u into its level
+
+                    // Traverse the adjacent nodes in CSR format
+                    for (int i = csr.csrV[u]; i < csr.csrV[u + 1]; ++i) {
+                        int w = csr.csrE[i]; //w為u的鄰居
+
+                        // If w has not been visited, update distance and add to next_queue
+                        if (dist[NOneighbor][w] < 0) {
+                            dist[NOneighbor][w] = dist[NOneighbor][u] + 1;
+                            nextQueue[f2_indicator++] = w;
+                        }
+
+                        // When a shortest path is found
+                        if (dist[NOneighbor][w] == dist[NOneighbor][u] + 1) {
+                            sigma[NOneighbor][w] += sigma[NOneighbor][u];
+                        }
+                    }
+                }
+                // Free current_queue and set it to next_queue for the next iteration
+                f1_indicator = f2_indicator;
+                f2_indicator = 0;
+                level++;
+            }
+
+            end_time=seconds();
+            time_phase1 += end_time-start_time;
+            start_time=seconds();
+
+            //backward
+            for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
+                int w = S[d];
+                // for(int v: predecessors[w]){
+                //     delta[v] += (sigma[NOneighbor][v] / (float)sigma[NOneighbor][w]) * (1.0 + delta[w]);
+                // }
+                for (int j = csr.csrV[w]; j < csr.csrV[w + 1]; ++j) {
+                    int v = csr.csrE[j];
+                    if (dist[NOneighbor][v] == dist[NOneighbor][w] - 1) {
+                        delta[v] += (sigma[NOneighbor][v] / (float)sigma[NOneighbor][w]) * (1.0 + delta[w]);
+                    }
+                }
+                _BCs[w] += delta[w]; 
+            }
+
+            end_time=seconds();
+            time_phase2 += end_time-start_time;
+            //print dist and sigma
+            #pragma region print
+            // printf("==========S: %d==========\n",NeighborSourceID);
+            // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+            //     printf("dist[%d]: %d\n",nodeID,dist[NOneighbor][nodeID]);
+            // }
+            // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+            //     printf("sigma[%d]: %d\n",nodeID,sigma[NOneighbor][nodeID]);
+            // }
+            // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+            //     printf("delta[%d]: %.2f\n",nodeID,delta[nodeID]);
+            // }
+            #pragma endregion
+        }
+        
+
+        start_time=seconds();
+
+        //再計算出SourceID的forward
+        int max_depth_my=0;
+        for (int i = 0; i < V; i++) {
+            Source_sigma[i]  =    0;
+            Source_dist[i]   =   -1;
+            delta[i]         = 0.0f;
+            S[i]             =    i;
+        }
+
+        // SourceID forward bt DMF
+        for(int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID){
+            if(v_ID==SourceID){
+                Source_dist[SourceID] =0;
+                Source_sigma[SourceID]=1;
+            }else{
+                //Source_path[s][v_ID]    : 每個S的鄰居到v_ID的距離最小就累加。
+                //Source_distance[s][v_ID]: 每個S的鄰居到v_ID的距離最小。
+                int min_distance=INT32_MAX;
+                for (int current_source = 0; current_source < csr.csrNodesDegree[SourceID]; ++current_source) { //每個S的鄰居到v_ID的距離
+                    min_distance=min(min_distance,dist[current_source][v_ID]);
+                }
+                Source_dist[v_ID]=min_distance+1;
+                max_depth_my=max(max_depth_my,Source_dist[v_ID]);
+                for (int current_source = 0; current_source < csr.csrNodesDegree[SourceID]; ++current_source) { //每個S的鄰居到v_ID的距離
+                    if( min_distance == dist[current_source][v_ID]){ //current_source距離v_ID是最短
+                        Source_sigma[v_ID]+=sigma[current_source][v_ID];
+                    }
+                }
+            }
+
+        }
+        quicksort_nodeID_with_degree(S, Source_dist, csr.startNodeID, csr.endNodeID);
+        
+        end_time=seconds();
+        time_phase3 += end_time-start_time;
+        start_time=seconds();
+        
+        //SourceID的backward
+        for (int d = csr.startNodeID; d <= csr.endNodeID; ++d) {
+            int w = S[d];
+            for (int i = csr.csrV[w]; i < csr.csrV[w + 1]; ++i) {
+                int v = csr.csrE[i];
+                if (Source_dist[v] == Source_dist[w] - 1 ) {
+                   delta[v] += (Source_sigma[v] / (float)Source_sigma[w]) * (1.0 + delta[w]);
+                }
+            }
+            if(w!=SourceID)
+                _BCs[w] += delta[w]; 
+        }
+
+        end_time=seconds();
+        time_phase4 += end_time-start_time;
+
+        #pragma region print
+        // printf("==========S: %d==========\n",SourceID);
+        // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+        //     printf("Source_dist[%d]: %d\n",nodeID,Source_dist[nodeID]);
+        // }
+        // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+        //     printf("Source_sigma[%d]: %d\n",nodeID,Source_sigma[nodeID]);
+        // }
+        // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+        //     printf("delta[%d]: %.2f\n",nodeID,delta[nodeID]);
+        // }
+        #pragma endregion
+    
+    }
+
+    //確認所有node尚未被計算過BC值(要做BFS)
+    int *notDoneIDList = (int*)calloc(sizeof(int), csr.csrVSize); 
+    int lowDegreeBFSList_size=0;
+    //找出尚未當Source的點
+    for(int i=csr.startNodeID;i<=csr.endNodeID; ++i){
+        if(!Vertex_computed[i]){
+            notDoneIDList[lowDegreeBFSList_size++]=i;
+        }
+    }
+
+    // printf("done notDoneIDList!!\n");
+
+    //othernode 正常brandes
+    for(int i=0 ; i<lowDegreeBFSList_size ; ++i){
+        start_time=seconds();
+        int SourceID = notDoneIDList[i];
+        //initial
+        for (int i = 0; i < V; i++) {
+            Source_sigma[i] =  0;
+            Source_dist[i]  = -1;
+            delta[i] = 0.0f;
+        }
+        
+        //forward
+        Source_sigma[SourceID] = 1;
+        Source_dist[SourceID]  = 0;
+        f1_indicator    = 0;
+        f2_indicator    = 0;
+        S_indicator     = 0;
+        // Re-initialize current_queue
+        f1[f1_indicator++] = SourceID;
+        int level = 0;
+
+        while (f1_indicator>0){ 
+        // printf("level: %d\n",level);
+            // Allocate new memory for next_queue in each iteration
+            int* currentQueue;
+            int* nextQueue;
+            if(level% 2 == 0){
+                currentQueue = f1;
+                nextQueue = f2;
+            }
+            else{
+                currentQueue = f2;
+                nextQueue = f1;
+            }
+            
+            for(int v=0; v<f1_indicator; v++) {
+                int u = currentQueue[v];
+                S[S_indicator++] = u;  // Put node u into its level
+                // Traverse the adjacent nodes in CSR format
+                for (int i = csr.csrV[u]; i < csr.csrV[u + 1]; ++i) {
+                    int w = csr.csrE[i]; //w為u的鄰居
+                    // If w has not been visited, update distance and add to next_queue
+                    if (Source_dist[w] < 0) {
+                        Source_dist[w] = Source_dist[u] + 1;
+                        nextQueue[f2_indicator++] = w;
+                    }
+                    // When a shortest path is found
+                    if (Source_dist[w] == Source_dist[u] + 1) {
+                        Source_sigma[w] += Source_sigma[u];
+                    }
+                }
+            }
+            // Free current_queue and set it to next_queue for the next iteration
+            f1_indicator = f2_indicator;
+            f2_indicator = 0;
+            level++;
+        }
+
+        end_time=seconds();
+        time_phase1 += end_time-start_time;
+        start_time=seconds();
+
+        //backward
+        for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
+            int w = S[d];
+            // for(int v: predecessors[w]){
+            //     delta[v] += (Source_sigma[v] / (float)Source_sigma[w]) * (1.0 + delta[w]);
+            // }
+            for (int j = csr.csrV[w]; j < csr.csrV[w + 1]; ++j) {
+                int v = csr.csrE[j];
+                if (Source_dist[v] == Source_dist[w] - 1) {
+                    delta[v] += (Source_sigma[v] / (float)Source_sigma[w]) * (1.0 + delta[w]);
+                }
+            }
+            _BCs[w] += delta[w]; 
+        }
+
+        end_time=seconds();
+        time_phase2 += end_time-start_time;
+
+    }
+
+
+    // printf("phase1 time: %0.6f\n", time_phase1); //BFS forward
+    // printf("phase2 time: %0.6f\n", time_phase2); //BFS backward
+    // printf("phase3 time: %0.6f\n", time_phase3); //DMF forward
+    // printf("phase4 time: %0.6f\n", time_phase4); //DMF backward
+    // printf("phase5 time: %0.6f\n", time_phase5);
+    // printf("BFSNode_size: %d\n", csr.csrVSize - DMFnode -2);
+    // printf("DMFnode_size: %d\n", DMFnode);
+
+    
+}
+
+
+void computeBC_DMFBased_Sequential_save_memory(struct CSR& csr,float* _BCs) {
+    // Allocate memory for time
+    double time_phase1 = 0.0f;
+    double time_phase2 = 0.0f;
+    double time_phase3 = 0.0f;
+    double time_phase4 = 0.0f;
+    double time_phase5 = 0.0f;
+    double start_time  = 0.0f;
+    double end_time    = 0.0f;
+
+    int DMFnode=0;
+
+    // Allocate memory for vertex coverage
+    int V=csr.csrVSize;
+    bool *Vertex_computed = (bool*)calloc(sizeof(bool), csr.csrESize); //確認node已被計算過BC值
+
+    //找出avg_degree
+    int avg_degree= (int)ceil(csr.csrESize/V);
+    printf("avg_degree: %d\n",avg_degree);
+
+    // Allocate memory for sigma, dist, delta, and the stack S
+    int*   S     = (int*)malloc(V * sizeof(int));      // S is a 2D array (stack)
+    int*   Source_sigma = (int*)malloc(V * sizeof(int));     // sigma is a 1D array
+    int*   Source_dist  = (int*)malloc(V * sizeof(int));      // dist is a 1D array
+    int**   sigma = (int**)malloc((avg_degree) * sizeof(int*));     // sigma is a 2D array
+    int**   dist  = (int**)malloc((avg_degree) * sizeof(int*));     // sigma is a 2D array
+    vector<vector<int>> predecessors(V);   // Predecessor list
+    for (int i = 0; i < avg_degree; i++) {
+        dist [i] = (int*)malloc(V *sizeof(int)); // 每個ID的點都需要紀錄距離
+        sigma[i] = (int*)malloc(V *sizeof(int)); // 每個ID的點都需要紀錄路徑數量
+    }
+    
+
+    float* delta = (float*)malloc(V * sizeof(float)); // delta is a 1D array
+    int*   f1 = (int*)malloc(V * sizeof(int));
+    int*   f2 = (int*)malloc(V * sizeof(int));
+    int    f1_indicator=0;
+    int    f2_indicator=0;
+    int    S_indicator =0;
+
+    //用degree做排序 大->小
+    csr.orderedCsrV  = (int*)calloc(sizeof(int), V);
+    memset(csr.orderedCsrV, -1, sizeof(int) * V);
+    for(int i=csr.startNodeID;i<=csr.endNodeID;i++){
+            csr.orderedCsrV[i]=i;
+    }
+    quicksort_nodeID_with_degree(csr.orderedCsrV, csr.csrNodesDegree, csr.startNodeID, csr.endNodeID);
+
+    int othernodeStart=0;
+    for(int i=csr.endNodeID;i>=csr.startNodeID;i--){
+        int SourceID = csr.orderedCsrV[i];
+
+        //如果SourceID的degree大於avg_degree，不適合DMF定理
+        if(csr.csrNodesDegree[SourceID] > avg_degree){
+            othernodeStart=i;
+            break;
+        }
+
+        
+        //檢查SourceID的鄰居是否有被計算過了? 有的話就不做DMF，直接做BFS。
+        bool N_flag =false;
+        for(int neighborIndex = csr.csrV[SourceID] ; neighborIndex < csr.csrV[SourceID + 1] ; neighborIndex ++){
+            if(Vertex_computed[csr.csrE[neighborIndex]]){
+               N_flag=true;
+               break; 
+            }
+        }
+        
+        //做BFS先跳過
+        //檢查SourceID是否有被計算過了?
+        if(N_flag || Vertex_computed[SourceID]) continue;
+        
+        //這個Source
+        Vertex_computed[SourceID]=true;
+        DMFnode++;
+
+        //計算SourceID鄰居的dist以及sigma (forward)
+        for(int NeighborSource_index = csr.csrV[SourceID]; NeighborSource_index < csr.csrV[SourceID + 1] ; ++NeighborSource_index) {
+            int NeighborSourceID = csr.csrE[NeighborSource_index];
+            Vertex_computed[NeighborSourceID]=true;
+            // printf("NeighborSourceID: %d\n",NeighborSourceID);
+
+            start_time=seconds();
+
+            predecessors.assign(V, vector<int>());  // Reset Successors with empty vectors
+            //forward
+            int NOneighbor= (NeighborSource_index-csr.csrV[SourceID]); //從0開始記錄鄰居的dist和sigma
+            for (int i = 0; i < V; i++) {
+                sigma[NOneighbor][i] =  0;
+                dist[NOneighbor][i]  = -1;
+                delta[i] = 0.0f;
+            }
+
+
+            sigma[NOneighbor][NeighborSourceID] = 1;
+            dist[NOneighbor][NeighborSourceID]  = 0;
+            f1_indicator    = 0;
+            f2_indicator    = 0;
+            S_indicator     = 0;
+            // Re-initialize current_queue
+            f1[f1_indicator++] = NeighborSourceID;
+            int level = 0;
+            while (f1_indicator>0) { 
+            // printf("level: %d\n",level);
+
+                // Allocate new memory for next_queue in each iteration
+                int* currentQueue;
+                int* nextQueue;
+                if(level% 2 == 0){
+                    currentQueue = f1;
+                    nextQueue = f2;
+                }
+                else{
+                    currentQueue = f2;
+                    nextQueue = f1;
+                }
+
+                for(int v=0; v<f1_indicator; v++) {
+                    int u = currentQueue[v];
+                    S[S_indicator++] = u;  // Put node u into its level
+
+                    // Traverse the adjacent nodes in CSR format
+                    for (int i = csr.csrV[u]; i < csr.csrV[u + 1]; ++i) {
+                        int w = csr.csrE[i]; //w為u的鄰居
+
+                        // If w has not been visited, update distance and add to next_queue
+                        if (dist[NOneighbor][w] < 0) {
+                            dist[NOneighbor][w] = dist[NOneighbor][u] + 1;
+                            nextQueue[f2_indicator++] = w;
+                        }
+
+                        // When a shortest path is found
+                        if (dist[NOneighbor][w] == dist[NOneighbor][u] + 1) {
+                            sigma[NOneighbor][w] += sigma[NOneighbor][u];
+                            predecessors[w].push_back(u);
+                        }
+                    }
+                }
+                // Free current_queue and set it to next_queue for the next iteration
+                f1_indicator = f2_indicator;
+                f2_indicator = 0;
+                level++;
+            }
+
+            end_time=seconds();
+            time_phase1 += end_time-start_time;
+            start_time=seconds();
+
+            //backward
+            for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
+                int w = S[d];
+                for(int v: predecessors[w]){
+                    delta[v] += (sigma[NOneighbor][v] / (float)sigma[NOneighbor][w]) * (1.0 + delta[w]);
+                }
+                // for (int j = csr.csrV[w]; j < csr.csrV[w + 1]; ++j) {
+                //     int v = csr.csrE[j];
+                //     if (dist[NOneighbor][v] == dist[NOneighbor][w] - 1) {
+                //         delta[v] += (sigma[NOneighbor][v] / (float)sigma[NOneighbor][w]) * (1.0 + delta[w]);
+                //     }
+                // }
+                _BCs[w] += delta[w]; 
+            }
+
+            end_time=seconds();
+            time_phase2 += end_time-start_time;
+            //print dist and sigma
+            #pragma region print
+            // printf("==========S: %d==========\n",NeighborSourceID);
+            // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+            //     printf("dist[%d]: %d\n",nodeID,dist[NOneighbor][nodeID]);
+            // }
+            // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+            //     printf("sigma[%d]: %d\n",nodeID,sigma[NOneighbor][nodeID]);
+            // }
+            // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+            //     printf("delta[%d]: %.2f\n",nodeID,delta[nodeID]);
+            // }
+            #pragma endregion
+        }
+        
+
+        start_time=seconds();
+
+        //再計算出SourceID的forward
+        int max_depth_my=0;
+        for (int i = 0; i < V; i++) {
+            Source_sigma[i]  =    0;
+            Source_dist[i]   =   -1;
+            delta[i]         = 0.0f;
+            S[i]             =    i;
+        }
+
+        // SourceID forward bt DMF
+        for(int v_ID = csr.startNodeID; v_ID <= csr.endNodeID; ++v_ID){
+            if(v_ID==SourceID){
+                Source_dist[SourceID] =0;
+                Source_sigma[SourceID]=1;
+            }else{
+                //Source_path[s][v_ID]    : 每個S的鄰居到v_ID的距離最小就累加。
+                //Source_distance[s][v_ID]: 每個S的鄰居到v_ID的距離最小。
+                int min_distance=INT32_MAX;
+                for (int current_source = 0; current_source < csr.csrNodesDegree[SourceID]; ++current_source) { //每個S的鄰居到v_ID的距離
+                    min_distance=min(min_distance,dist[current_source][v_ID]);
+                }
+                Source_dist[v_ID]=min_distance+1;
+                max_depth_my=max(max_depth_my,Source_dist[v_ID]);
+                for (int current_source = 0; current_source < csr.csrNodesDegree[SourceID]; ++current_source) { //每個S的鄰居到v_ID的距離
+                    if( min_distance == dist[current_source][v_ID]){ //current_source距離v_ID是最短
+                        Source_sigma[v_ID]+=sigma[current_source][v_ID];
+                    }
+                }
+            }
+
+        }
+        quicksort_nodeID_with_degree(S, Source_dist, csr.startNodeID, csr.endNodeID);
+        
+        end_time=seconds();
+        time_phase3 += end_time-start_time;
+        start_time=seconds();
+        
+        //SourceID的backward
+        for (int d = csr.startNodeID; d <= csr.endNodeID; ++d) {
+            int w = S[d];
+            for (int i = csr.csrV[w]; i < csr.csrV[w + 1]; ++i) {
+                int v = csr.csrE[i];
+                if (Source_dist[v] == Source_dist[w] - 1 ) {
+                   delta[v] += (Source_sigma[v] / (float)Source_sigma[w]) * (1.0 + delta[w]);
+                }
+            }
+            if(w!=SourceID)
+                _BCs[w] += delta[w]; 
+        }
+
+        end_time=seconds();
+        time_phase4 += end_time-start_time;
+
+        #pragma region print
+        // printf("==========S: %d==========\n",SourceID);
+        // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+        //     printf("Source_dist[%d]: %d\n",nodeID,Source_dist[nodeID]);
+        // }
+        // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+        //     printf("Source_sigma[%d]: %d\n",nodeID,Source_sigma[nodeID]);
+        // }
+        // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
+        //     printf("delta[%d]: %.2f\n",nodeID,delta[nodeID]);
+        // }
+        #pragma endregion
+    
+    }
+
+    //確認所有node尚未被計算過BC值(要做BFS)
+    int *notDoneIDList = (int*)calloc(sizeof(int), csr.csrVSize); 
+    int lowDegreeBFSList_size=0;
+    //找出尚未當Source的點
+    for(int i=csr.startNodeID;i<=csr.endNodeID; ++i){
+        if(!Vertex_computed[i]){
+            notDoneIDList[lowDegreeBFSList_size++]=i;
+        }
+    }
+
+    // printf("done notDoneIDList!!\n");
+
+    //othernode 正常brandes
+    for(int i=0 ; i<lowDegreeBFSList_size ; ++i){
+        start_time=seconds();
+        int SourceID = notDoneIDList[i];
+        //initial
+        predecessors.assign(V, vector<int>());  // Reset Successors with empty vectors
+        for (int i = 0; i < V; i++) {
+            Source_sigma[i] =  0;
+            Source_dist[i]  = -1;
+            delta[i] = 0.0f;
+        }
+        
+        //forward
+        Source_sigma[SourceID] = 1;
+        Source_dist[SourceID]  = 0;
+        f1_indicator    = 0;
+        f2_indicator    = 0;
+        S_indicator     = 0;
+        // Re-initialize current_queue
+        f1[f1_indicator++] = SourceID;
+        int level = 0;
+
+        while (f1_indicator>0){ 
+        // printf("level: %d\n",level);
+            // Allocate new memory for next_queue in each iteration
+            int* currentQueue;
+            int* nextQueue;
+            if(level% 2 == 0){
+                currentQueue = f1;
+                nextQueue = f2;
+            }
+            else{
+                currentQueue = f2;
+                nextQueue = f1;
+            }
+            
+            for(int v=0; v<f1_indicator; v++) {
+                int u = currentQueue[v];
+                S[S_indicator++] = u;  // Put node u into its level
+                // Traverse the adjacent nodes in CSR format
+                for (int i = csr.csrV[u]; i < csr.csrV[u + 1]; ++i) {
+                    int w = csr.csrE[i]; //w為u的鄰居
+                    // If w has not been visited, update distance and add to next_queue
+                    if (Source_dist[w] < 0) {
+                        Source_dist[w] = Source_dist[u] + 1;
+                        nextQueue[f2_indicator++] = w;
+                    }
+                    // When a shortest path is found
+                    if (Source_dist[w] == Source_dist[u] + 1) {
+                        Source_sigma[w] += Source_sigma[u];
+                        predecessors[w].push_back(u);
+                    }
+                }
+            }
+            // Free current_queue and set it to next_queue for the next iteration
+            f1_indicator = f2_indicator;
+            f2_indicator = 0;
+            level++;
+        }
+
+        end_time=seconds();
+        time_phase1 += end_time-start_time;
+        start_time=seconds();
+
+        //backward
+        for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
+            int w = S[d];
+            for(int v: predecessors[w]){
+                delta[v] += (Source_sigma[v] / (float)Source_sigma[w]) * (1.0 + delta[w]);
+            }
+            // for (int j = csr.csrV[w]; j < csr.csrV[w + 1]; ++j) {
+            //     int v = csr.csrE[j];
+            //     if (Source_dist[v] == Source_dist[w] - 1) {
+            //         delta[v] += (Source_sigma[v] / (float)Source_sigma[w]) * (1.0 + delta[w]);
+            //     }
+            // }
+            _BCs[w] += delta[w]; 
+        }
+
+        end_time=seconds();
+        time_phase2 += end_time-start_time;
+
+    }
+
+
+    printf("phase1 time: %0.6f\n", time_phase1); //BFS forward
+    printf("phase2 time: %0.6f\n", time_phase2); //BFS backward
+    printf("phase3 time: %0.6f\n", time_phase3); //DMF forward
+    printf("phase4 time: %0.6f\n", time_phase4); //DMF backward
+    // printf("phase5 time: %0.6f\n", time_phase5);
+    printf("BFSNode_size: %d\n", csr.csrVSize - DMFnode -2);
+    printf("DMFnode_size: %d\n", DMFnode);
+
+    
+}
+
 
 
 //循序_brandes切D1與AP
