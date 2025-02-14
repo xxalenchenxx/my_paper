@@ -1444,10 +1444,10 @@ void computeBC_DMF_2018(struct CSR& csr,float* _BCs) {
     }
 
 
-    // printf("phase1 time: %0.6f\n", time_phase1); //BFS forward
-    // printf("phase2 time: %0.6f\n", time_phase2); //BFS backward
-    // printf("phase3 time: %0.6f\n", time_phase3); //DMF forward
-    // printf("phase4 time: %0.6f\n", time_phase4); //DMF backward
+    printf("phase1 time: %0.6f\n", time_phase1); //BFS forward
+    printf("phase2 time: %0.6f\n", time_phase2); //BFS backward
+    printf("phase3 time: %0.6f\n", time_phase3); //DMF forward
+    printf("phase4 time: %0.6f\n", time_phase4); //DMF backward
     // printf("phase5 time: %0.6f\n", time_phase5);
     // printf("BFSNode_size: %d\n", csr.csrVSize - DMFnode -2);
     // printf("DMFnode_size: %d\n", DMFnode);
