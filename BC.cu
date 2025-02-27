@@ -1862,18 +1862,15 @@ void computeBC_D1folding(struct CSR* _csr, float* _BCs){
 //D1-folding,AP BC
 void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
     int V=_csr->csrVSize;
-    int* dist_arr   = (int*)malloc(sizeof(int) * V * 2);
-    // int* nodeQ      = (int*)malloc(sizeof(int) * V * 2);
-    // int Q_front     = 0;
-    // int Q_rear      = -1;
+    
     // Allocate memory for sigma, dist, delta, and the stack S
     int*   S      = (int*)malloc(V * 2* sizeof(int));      // S is a 2D array (stack)
     int*   sigma  = (int*)malloc(V * 2* sizeof(int));     // sigma is a 1D array
     int*   dist   = (int*)malloc(V * 2* sizeof(int));      // dist is a 1D array
     float* delta  = (float*)malloc(V * 2* sizeof(float)); // delta is a 1D array
     int*   S_size = (int*)malloc(V * 2* sizeof(int));    // S_size records the size of each level
-    int*   f1     = (int*)malloc((V * 2) * sizeof(int));
-    int*   f2     = (int*)malloc((V * 2) * sizeof(int));
+    int*   f1     = (int*)malloc(V * 2 * sizeof(int));
+    int*   f2     = (int*)malloc(V * 2 * sizeof(int));
     int    f1_indicator;
     int    f2_indicator;
     int    S_indicator =0;
@@ -1902,7 +1899,7 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
             sigma[i] =  0;
             dist[i]  = -1;
             //照該node的reach點數來初始，代表其他點看到這點至少看過reach-1個點在這個node之後。
-            delta[i] = (float)newID_infos[i].w - 1.0f; //_csr->representNode[i]
+            delta[i] = (float)newID_infos[i].w - 1.0f;
         }
 
         //initial value
@@ -1934,7 +1931,7 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
                 S[S_indicator++] = curNewID;  // Put node u into its level
                 // Traverse the adjacent nodes in CSR format
                 for(int new_nidx = _csr->orderedCsrV[curNewID] ; new_nidx < _csr->orderedCsrV[curNewID + 1] ; new_nidx ++) {
-                    int new_nid = _csr->csrE[new_nidx]; //w為u的鄰居
+                    int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
                     // If w has not been visited, update distance and add to next_queue
                     if (dist[new_nid] < 0) {
                         dist[new_nid] = dist[curNewID] + 1;
@@ -1954,16 +1951,18 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
 
         for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
             int w = S[d];
+            oldID = _csr->mapNodeID_New_to_Old[w];
             // for(int v: predecessors[w]){
             //     delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
             // }
             for(int new_nidx = _csr->orderedCsrV[w] ; new_nidx < _csr->orderedCsrV[w + 1] ; new_nidx ++) {
-                int v = _csr->csrE[new_nidx];
+                int v = _csr->orderedCsrE[new_nidx];
                 if (dist[v] == dist[w] - 1) {
                     delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
                 }
             }
-            _BCs[w] += delta[w] * newID_infos[sourceNewID].w; //_csr->representNode[sourceNewID]; 
+            //BC紀錄值到舊的ID的位置
+            _BCs[oldID] += delta[w] * newID_infos[sourceNewID].w; //_csr->representNode[sourceNewID]; 
             
         }
 
@@ -2002,7 +2001,7 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
         printf("newID %d, oldID %d, type %x, R_old:%d, ff_old:%d, R_new:%d, ff_new:%d\nneighbor{", sourceNewID, oldID, sourceType,_csr->representNode[oldID],_csr->ff[oldID],newID_infos[sourceNewID].w,newID_infos[sourceNewID].ff);
 
         for(int new_nidx = _csr->orderedCsrV[sourceNewID] ; new_nidx < _csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++) {
-            int new_nid = _csr->csrE[new_nidx]; //w為u的鄰居
+            int new_nid = _csr->orderedCsrE[new_nidx]; //w為u的鄰居
             printf("%d ", new_nid);
         }
         printf("}\n");
@@ -2032,11 +2031,11 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
     // }
     #pragma endregion //d1Node_Dist_And_CC_Recovery
 
-    // int oriEndNodeID = _csr->endNodeID - _csr->apCloneCount;
-    // printf("oriEndNodeID = %d\n", oriEndNodeID);
-    // for(int ID = _csr->startNodeID ; ID <= oriEndNodeID ; ID ++){
-    //     printf("BC[%d] = %.2f\n", ID, _BCs[ID]);
-    // }
+    int oriEndNodeID = _csr->endNodeID - _csr->apCloneCount;
+    printf("oriEndNodeID = %d\n", oriEndNodeID);
+    for(int ID = _csr->startNodeID ; ID <= oriEndNodeID ; ID ++){
+        printf("BC[%d] = %.2f\n", ID, _BCs[ID]);
+    }
 }
 
 
