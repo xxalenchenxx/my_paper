@@ -1910,10 +1910,10 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
         S_indicator        = 0;
         f1[f1_indicator++] = sourceNewID;
         int level = 0;
-
+        printf("===========Source(new): %d===========\n",sourceNewID);
         //forward traverse
         while (f1_indicator>0){ 
-        // printf("level: %d\n",level);
+        printf("level: %d\n queue: ",level);
             // Allocate new memory for next_queue in each iteration
             int* currentQueue;
             int* nextQueue;
@@ -1929,6 +1929,7 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
             for(int v=0; v<f1_indicator; v++) {
                 int curNewID = currentQueue[v];
                 S[S_indicator++] = curNewID;  // Put node u into its level
+                printf("%d ",curNewID);
                 // Traverse the adjacent nodes in CSR format
                 for(int new_nidx = _csr->orderedCsrV[curNewID] ; new_nidx < _csr->orderedCsrV[curNewID + 1] ; new_nidx ++) {
                     int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
@@ -1943,6 +1944,7 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
                     }
                 }
             }
+            printf("\n");
             // Free current_queue and set it to next_queue for the next iteration
             f1_indicator = f2_indicator;
             f2_indicator = 0;
@@ -1962,50 +1964,59 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
                 }
             }
             //BC紀錄值到舊的ID的位置
-            _BCs[oldID] += delta[w] * newID_infos[sourceNewID].w; //_csr->representNode[sourceNewID]; 
-            
+            _BCs[oldID] += delta[w] * newID_infos[sourceNewID].w ; // + (newID_infos[sourceNewID].w * (delta[w]-(newID_infos[w].w-1)))
         }
 
-        // while(!(Q_front > Q_rear)){
-        //     curNewID = nodeQ[Q_front++];
-            
-        //     for(new_nidx = _csr->orderedCsrV[curNewID] ; new_nidx < _csr->orderedCsrV[curNewID + 1] ; new_nidx ++){
-        //         new_nid = _csr->orderedCsrE[new_nidx];
-
-        //         if(dist_arr[new_nid] == -1){
-        //             dist_arr[new_nid] = dist_arr[curNewID] + 1;
-        //             nodeQ[++Q_rear] = new_nid;
-
-        //             allDist += newID_infos[new_nid].ff + dist_arr[new_nid] * newID_infos[new_nid].w;
-        //         }
-        //     }
-        // }
-        // _csr->CCs[oldID] = allDist + _csr->ff[oldID];
-        // printf("CC[%d] = %d\n", oldID, _csr->CCs[oldID]);
+        for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
+            int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
+            int sourceType = _csr->nodesType[oldID];
+    
+            if(sourceType & ClonedAP){
+                printf("[ClonedAP] ");
+                // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
+            }else{
+                printf("[normal] ");
+            }
+            printf("newID %d, oldID %d, delta: %.2f\n", sourceNewID, oldID,delta[sourceNewID] );
+        }
     }
     
     #pragma endregion 
     
 
     #pragma region ptintValue
-    for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-        int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-        int sourceType = _csr->nodesType[oldID];
+    // for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
+    //     int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
+    //     int sourceType = _csr->nodesType[oldID];
 
-        if(sourceType & ClonedAP){
-            printf("[ClonedAP] ");
-            // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
-        }else{
-            printf("[normal] ");
-        }
-        printf("newID %d, oldID %d, type %x, R_old:%d, ff_old:%d, R_new:%d, ff_new:%d\nneighbor{", sourceNewID, oldID, sourceType,_csr->representNode[oldID],_csr->ff[oldID],newID_infos[sourceNewID].w,newID_infos[sourceNewID].ff);
+    //     if(sourceType & ClonedAP){
+    //         printf("[ClonedAP] ");
+    //         // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
+    //     }else{
+    //         printf("[normal] ");
+    //     }
+    //     printf("newID %d, oldID %d, type %x, R_old:%d, ff_old:%d, R_new:%d, ff_new:%d\nneighbor{", sourceNewID, oldID, sourceType,_csr->representNode[oldID],_csr->ff[oldID],newID_infos[sourceNewID].w,newID_infos[sourceNewID].ff);
 
-        for(int new_nidx = _csr->orderedCsrV[sourceNewID] ; new_nidx < _csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++) {
-            int new_nid = _csr->orderedCsrE[new_nidx]; //w為u的鄰居
-            printf("%d ", new_nid);
-        }
-        printf("}\n");
-    }
+    //     for(int new_nidx = _csr->orderedCsrV[sourceNewID] ; new_nidx < _csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++) {
+    //         int new_nid = _csr->orderedCsrE[new_nidx]; //w為u的鄰居
+    //         printf("%d ", new_nid);
+    //     }
+    //     printf("}\n");
+    // }
+    
+    // for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
+    //     int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
+    //     int sourceType = _csr->nodesType[oldID];
+
+    //     if(sourceType & ClonedAP){
+    //         printf("[ClonedAP] ");
+    //         // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
+    //     }else{
+    //         printf("[normal] ");
+    //     }
+    //     printf("newID %d, oldID %d, delta: %.2f\n", sourceNewID, oldID,delta[sourceNewID] );
+
+    // }
     #pragma endregion 
 
     #pragma region d1Node_Dist_And_CC_Recovery
@@ -2020,20 +2031,21 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
     // }
     // printf("_csr->totalNodeNumber = %2d\n", _csr->totalNodeNumber);
 
-    // int d1NodeID        = -1;
-    // int d1NodeParentID  = -1;
-    // for(int d1NodeIndex = _csr->degreeOneNodesQ->rear ; d1NodeIndex >= 0 ; d1NodeIndex --){
-    //     d1NodeID        = _csr->degreeOneNodesQ->dataArr[d1NodeIndex];
-    //     d1NodeParentID  = _csr->D1Parent[d1NodeID];
-    //     _BCs[d1NodeID]  = (_csr->representNode[d1NodeID]-1) * (V-1-_csr->representNode[d1NodeID]);
-    //     _BCs[d1NodeParentID]  += (V-_csr->representNode[d1NodeID]-2) * (_csr->representNode[d1NodeID]);
-    //     // printf("d1NodeID = %2d, _CCs[%2d] = %2d, ParentID = %2d, _CCs[%2d] = %2d\n", d1NodeID, d1NodeID, _CCs[d1NodeID], d1NodeParentID, d1NodeParentID, _CCs[d1NodeParentID]);
-    // }
+    int d1NodeID        = -1;
+    int d1NodeParentID  = -1;
+    for(int d1NodeIndex = _csr->degreeOneNodesQ->rear ; d1NodeIndex >= 0 ; d1NodeIndex --){
+        d1NodeID        = _csr->degreeOneNodesQ->dataArr[d1NodeIndex];
+        d1NodeParentID  = _csr->D1Parent[d1NodeID];
+        _BCs[d1NodeID]  = (_csr->representNode[d1NodeID]-1) * (V-1-_csr->representNode[d1NodeID]);
+        _BCs[d1NodeParentID]  += (V-_csr->representNode[d1NodeID]-2) * (_csr->representNode[d1NodeID]);
+        // printf("d1NodeID = %2d, _CCs[%2d] = %2d, ParentID = %2d, _CCs[%2d] = %2d\n", d1NodeID, d1NodeID, _CCs[d1NodeID], d1NodeParentID, d1NodeParentID, _CCs[d1NodeParentID]);
+    }
+    
     #pragma endregion //d1Node_Dist_And_CC_Recovery
 
     int oriEndNodeID = _csr->endNodeID - _csr->apCloneCount;
     printf("oriEndNodeID = %d\n", oriEndNodeID);
-    for(int ID = _csr->startNodeID ; ID <= oriEndNodeID ; ID ++){
+    for(int ID = _csr->startNodeID ; ID <= _csr->endNodeID ; ID ++){
         printf("BC[%d] = %.2f\n", ID, _BCs[ID]);
     }
 }
