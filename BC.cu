@@ -191,10 +191,10 @@ int main(int argc, char* argv[]){
 
 
     //檢查答案BC
-    // for(int i=0;i<csr->csrVSize;i++){
-    //     ans_para_vec[i]=ans_para[i];
-    //     ans_para_vec2[i]=ans_para2[i];
-    // }
+    for(int i=0;i<csr->csrVSize;i++){
+        ans_para_vec[i]=ans_para[i];
+        ans_para_vec2[i]=ans_para2[i];
+    }
     // // check_ans(ans_para_vec,ans_para_vec2);
     // check_ans(ans,ans_para_vec2);
     // check_ans_int(ans_CC,my_CC,*csr);
@@ -1885,127 +1885,127 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
 
     #pragma region BC
     //Traverse
-    for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-        int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-        int sourceType = _csr->nodesType[oldID];
-
-        if(sourceType & ClonedAP){
-            // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
-            continue;
-        }
-        
-        //變數值使用NewID
-        for (int i = 0; i <= _csr->newEndID; i++) {
-            sigma[i] =  0;
-            dist[i]  = -1;
-            //照該node的reach點數來初始，代表其他點看到這點至少看過reach-1個點在這個node之後。
-            delta[i] = (float)newID_infos[i].w - 1.0f;
-        }
-
-        //initial value
-        sigma[sourceNewID] = 1;
-        dist[sourceNewID]  = 0;
-        f1_indicator       = 0;
-        f2_indicator       = 0;
-        S_indicator        = 0;
-        f1[f1_indicator++] = sourceNewID;
-        int level = 0;
-        printf("===========Source(new): %d===========\n",sourceNewID);
-        //forward traverse
-        while (f1_indicator>0){ 
-        printf("level: %d\n queue: ",level);
-            // Allocate new memory for next_queue in each iteration
-            int* currentQueue;
-            int* nextQueue;
-            if(level% 2 == 0){
-                currentQueue = f1;
-                nextQueue = f2;
-            }
-            else{
-                currentQueue = f2;
-                nextQueue = f1;
-            }
-            
-            for(int v=0; v<f1_indicator; v++) {
-                int curNewID = currentQueue[v];
-                S[S_indicator++] = curNewID;  // Put node u into its level
-                printf("%d ",curNewID);
-                // Traverse the adjacent nodes in CSR format
-                for(int new_nidx = _csr->orderedCsrV[curNewID] ; new_nidx < _csr->orderedCsrV[curNewID + 1] ; new_nidx ++) {
-                    int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
-                    // If w has not been visited, update distance and add to next_queue
-                    if (dist[new_nid] < 0) {
-                        dist[new_nid] = dist[curNewID] + 1;
-                        nextQueue[f2_indicator++] = new_nid;
-                    }
-                    // When a shortest path is found
-                    if (dist[new_nid] == dist[curNewID] + 1) {
-                        sigma[new_nid] += sigma[curNewID];
-                    }
-                }
-            }
-            printf("\n");
-            // Free current_queue and set it to next_queue for the next iteration
-            f1_indicator = f2_indicator;
-            f2_indicator = 0;
-            level++;
-        }
-
-        for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
-            int w = S[d];
-            oldID = _csr->mapNodeID_New_to_Old[w];
-            // for(int v: predecessors[w]){
-            //     delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
-            // }
-            for(int new_nidx = _csr->orderedCsrV[w] ; new_nidx < _csr->orderedCsrV[w + 1] ; new_nidx ++) {
-                int v = _csr->orderedCsrE[new_nidx];
-                if (dist[v] == dist[w] - 1) {
-                    delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
-                }
-            }
-            //BC紀錄值到舊的ID的位置
-            _BCs[oldID] += delta[w] * newID_infos[sourceNewID].w ; // + (newID_infos[sourceNewID].w * (delta[w]-(newID_infos[w].w-1)))
-        }
-
-        for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-            int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-            int sourceType = _csr->nodesType[oldID];
-    
-            if(sourceType & ClonedAP){
-                printf("[ClonedAP] ");
-                // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
-            }else{
-                printf("[normal] ");
-            }
-            printf("newID %d, oldID %d, delta: %.2f\n", sourceNewID, oldID,delta[sourceNewID] );
-        }
-    }
-    
-    #pragma endregion 
-    
-
-    #pragma region ptintValue
     // for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
     //     int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
     //     int sourceType = _csr->nodesType[oldID];
 
     //     if(sourceType & ClonedAP){
-    //         printf("[ClonedAP] ");
     //         // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
-    //     }else{
-    //         printf("[normal] ");
+    //         continue;
     //     }
-    //     printf("newID %d, oldID %d, type %x, R_old:%d, ff_old:%d, R_new:%d, ff_new:%d\nneighbor{", sourceNewID, oldID, sourceType,_csr->representNode[oldID],_csr->ff[oldID],newID_infos[sourceNewID].w,newID_infos[sourceNewID].ff);
+        
+    //     //變數值使用NewID
+    //     for (int i = 0; i <= _csr->newEndID; i++) {
+    //         sigma[i] =  0;
+    //         dist[i]  = -1;
+    //         //照該node的reach點數來初始，代表其他點看到這點至少看過reach-1個點在這個node之後。
+    //         delta[i] = (float)newID_infos[i].w - 1.0f;
+    //     }
 
-    //     for(int new_nidx = _csr->orderedCsrV[sourceNewID] ; new_nidx < _csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++) {
-    //         int new_nid = _csr->orderedCsrE[new_nidx]; //w為u的鄰居
-    //         printf("%d ", new_nid);
+    //     //initial value
+    //     sigma[sourceNewID] = 1;
+    //     dist[sourceNewID]  = 0;
+    //     f1_indicator       = 0;
+    //     f2_indicator       = 0;
+    //     S_indicator        = 0;
+    //     f1[f1_indicator++] = sourceNewID;
+    //     int level = 0;
+    //     // printf("===========Source(new): %d===========\n",sourceNewID);
+    //     //forward traverse
+    //     while (f1_indicator>0){ 
+    //     // printf("level: %d\n queue: ",level);
+    //         // Allocate new memory for next_queue in each iteration
+    //         int* currentQueue;
+    //         int* nextQueue;
+    //         if(level% 2 == 0){
+    //             currentQueue = f1;
+    //             nextQueue = f2;
+    //         }
+    //         else{
+    //             currentQueue = f2;
+    //             nextQueue = f1;
+    //         }
+            
+    //         for(int v=0; v<f1_indicator; v++) {
+    //             int curNewID = currentQueue[v];
+    //             S[S_indicator++] = curNewID;  // Put node u into its level
+    //             // printf("%d ",curNewID);
+    //             // Traverse the adjacent nodes in CSR format
+    //             for(int new_nidx = _csr->orderedCsrV[curNewID] ; new_nidx < _csr->orderedCsrV[curNewID + 1] ; new_nidx ++) {
+    //                 int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
+    //                 // If w has not been visited, update distance and add to next_queue
+    //                 if (dist[new_nid] < 0) {
+    //                     dist[new_nid] = dist[curNewID] + 1;
+    //                     nextQueue[f2_indicator++] = new_nid;
+    //                 }
+    //                 // When a shortest path is found
+    //                 if (dist[new_nid] == dist[curNewID] + 1) {
+    //                     sigma[new_nid] += sigma[curNewID];
+    //                 }
+    //             }
+    //         }
+    //         // printf("\n");
+    //         // Free current_queue and set it to next_queue for the next iteration
+    //         f1_indicator = f2_indicator;
+    //         f2_indicator = 0;
+    //         level++;
     //     }
-    //     printf("}\n");
+
+    //     for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
+    //         int w = S[d];
+    //         oldID = _csr->mapNodeID_New_to_Ori[w];
+    //         // for(int v: predecessors[w]){
+    //         //     delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
+    //         // }
+    //         for(int new_nidx = _csr->orderedCsrV[w] ; new_nidx < _csr->orderedCsrV[w + 1] ; new_nidx ++) {
+    //             int v = _csr->orderedCsrE[new_nidx];
+    //             if (dist[v] == dist[w] - 1) {
+    //                 delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
+    //             }
+    //         }
+    //         //BC紀錄值到舊的ID的位置
+    //         _BCs[oldID] += delta[w] * newID_infos[sourceNewID].w ; // + (newID_infos[sourceNewID].w * (delta[w]-(newID_infos[w].w-1)))
+    //     }
+
+    //     // for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
+    //     //     int oldID = _csr->mapNodeID_New_to_Ori[sourceNewID];
+    //     //     int sourceType = _csr->nodesType[oldID];
+    //     //     if(sourceType & ClonedAP){
+    //     //         printf("[ClonedAP] ");
+    //     //         // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
+    //     //     }else{
+    //     //         printf("[normal] ");
+    //     //     }
+    //     //     printf("newID %d, oldID %d, delta: %.2f\n", sourceNewID, oldID,delta[sourceNewID] );
+    //     // }
+
     // }
     
+    #pragma endregion 
+    
+
+    #pragma region ptintValue
+    for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
+        int oldID = _csr->mapNodeID_New_to_Ori[sourceNewID];
+        int sourceType = _csr->nodesType[oldID];
+
+        if(sourceType & ClonedAP){
+            printf("[ClonedAP] ");
+            // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
+        }else{
+            printf("[normal] ");
+        }
+        printf("newID %d, oldID %d, type %x, R_old:%d, ff_old:%d, R_new:%d, ff_new:%d\nneighbor{", sourceNewID, oldID, sourceType,_csr->representNode[oldID],_csr->ff[oldID],newID_infos[sourceNewID].w,newID_infos[sourceNewID].ff);
+
+        for(int new_nidx = _csr->orderedCsrV[sourceNewID] ; new_nidx < _csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++) {
+            int new_nid = _csr->orderedCsrE[new_nidx]; //w為u的鄰居
+            printf("%d ", new_nid);
+        }
+        printf("}\n");
+    }
+
     // for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-    //     int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
+    //     int oldID = _csr->mapNodeID_New_to_Ori[sourceNewID];
     //     int sourceType = _csr->nodesType[oldID];
 
     //     if(sourceType & ClonedAP){
@@ -2043,11 +2043,11 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
     
     #pragma endregion //d1Node_Dist_And_CC_Recovery
 
-    int oriEndNodeID = _csr->endNodeID - _csr->apCloneCount;
-    printf("oriEndNodeID = %d\n", oriEndNodeID);
-    for(int ID = _csr->startNodeID ; ID <= _csr->endNodeID ; ID ++){
-        printf("BC[%d] = %.2f\n", ID, _BCs[ID]);
-    }
+    // int oriEndNodeID = _csr->endNodeID - _csr->apCloneCount;
+    // printf("oriEndNodeID = %d\n", oriEndNodeID);
+    // for(int ID = _csr->startNodeID ; ID <= _csr->endNodeID ; ID ++){
+    //     printf("BC[%d] = %.2f\n", ID, _BCs[ID]);
+    // }
 }
 
 
