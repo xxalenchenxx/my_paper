@@ -133,6 +133,8 @@ void computeBC_DMFBased_Sequential_D2_otherDeg(struct CSR* csr,float* _BCs);//�
 void computeBC_DMFBased_Sequential_D1fold_save(struct CSR* csr,float* _BCs);//D1 folding+save memory
 void computeBC_DMF_Sequential_D1_AP(struct CSR* _csr,float* _BCs);//D1 folding+AP+save memory
 //我的DMF平行版本
+void DMF2018_par(struct CSR csr,float* _BCs);
+void DMF2018_D3_par(struct CSR csr,float* _BCs);
 void EXDMF_D1_DP_par( CSR* csr, float *BC);
 
 
@@ -183,10 +185,10 @@ int main(int argc, char* argv[]){
     // computeCC_shareBased_oneTraverse(csr,my_CC);
     // cout<<"max_degree: "<<csr->maxDegree<<endl;
 
-    brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
+    // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
     // computeBC_D1folding(csr,ans_para);
     // compute_D1_AP_BC(csr,ans_para);
-    // brandes_SS_par(*csr,csr->csrVSize,ans_para);
+    brandes_SS_par(*csr,csr->csrVSize,ans_para);
     // brandes_MS_par(*csr , max_multi , ans_para);
     // // brandes_MS_par(*csr , max_multi , ans_para);
 
@@ -207,12 +209,14 @@ int main(int argc, char* argv[]){
     // computeBC_DMF_Sequential_D1_AP(csr2,ans_para);
     // computeBC_DMF_D3_2018(csr,ans_para);
     // computeBC_DMF_2018(*csr,ans_para2);
-    // computeBC_D1folding(csr,ans_para2);
+    // computeBC_D1folding(csr,ans_para);
     // compute_D1_AP_BC(csr,ans_para);
     // computeCC_ans(csr,ans_CC);
     // compute_D1_CC(csr,my_CC);
 
-    EXDMF_D1_DP_par(csr,ans_para);
+    // EXDMF_D1_DP_par(csr,ans_para);
+    // DMF2018_par(*csr,ans_para);
+    DMF2018_D3_par(*csr,ans_para2);
 
     multi_time2 = seconds();
     printf("done 2\n");
@@ -234,8 +238,8 @@ int main(int argc, char* argv[]){
         ans_para_vec[i]=ans_para[i];
         ans_para_vec2[i]=ans_para2[i];
     }
-    // check_ans(ans_para_vec,ans_para_vec2,*csr);
-    check_ans(ans,ans_para_vec,*csr);
+    check_ans(ans_para_vec,ans_para_vec2,*csr);
+    // check_ans(ans,ans_para_vec,*csr);
     // check_ans_int(ans_CC,my_CC,*csr);
 
     //答案檢查CC
@@ -6867,7 +6871,359 @@ void brandes_SS_par( CSR& csr, int V, float *BC) {
 #pragma region parallel_my_method
 
 #pragma region other_function
-//初始component內部的所有node以及source的dist & sigma
+
+    #pragma region normal
+//初始graph所有node以及source的dist & sigma(適用於原始的演算法)
+__global__ void resetBC_value__n(int* dist,int* f1,int* sigma,float* delta,int* stack,int* level ,int sourceID,int NOneighbor, int V){
+    register const int idx = threadIdx.x + blockIdx.x * blockDim.x; // [0-newendID] [newnedID+1 - 2*newnedID+2]
+
+    if(idx < V){
+        dist[NOneighbor*V+idx]  = 100000;
+        sigma[NOneighbor*V+idx] = 0;
+        delta[idx] = 0.0f;
+        
+        level[idx] = -1;
+        f1[idx]    = -1;
+    }
+    f1[0]    = sourceID;
+    stack[0] = sourceID;
+    if(idx == sourceID){
+        dist[NOneighbor*V+idx]  = 0;
+        sigma[NOneighbor*V+idx] = 1;
+        level[idx] = 0;
+    }
+
+    // if(idx < size){
+    //     printf("dist[%d][%d]: %d\n",NOneighbor,v_ID,dist[(NOneighbor)*V+v_ID]);
+    //     printf("delta[%d]: %.2f\n",v_ID,delta[v_ID]);
+    // }
+}
+
+__global__ void deltaCalculation__n(int* g_csrV,int* g_csrE,float* g_delta,int* sigma,int* stack,int* dist,int blocknum,int j,int startposition,int size, int NOneighbor,int V,int sourceID,float* BC){
+
+    register const int bid = blockIdx.x + j*blocknum;
+    register const int node = stack[startposition + bid];
+    // printf("traverse node: %d\n",node);
+    if(bid >= size || node == -1) return;
+
+    register const int degree = g_csrV[node+1] - g_csrV[node];
+    register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0));
+
+    for(int i=0;i<threadOffset;i++) {
+        register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x;
+        // printf("%d->g_csrE[%d]: %d\n",node,position,g_csrE[position]);
+        if(position < g_csrV[node+1] && (dist[NOneighbor*V+node]) - 1 == dist[NOneighbor*V+g_csrE[position]]){
+            // printf("traverse node: %d\n",node);
+            atomicAdd(&g_delta[g_csrE[position]],((float)sigma[NOneighbor*V+g_csrE[position]]/sigma[NOneighbor*V+node])*(1.0+g_delta[node]));
+            //printf("%d(%d,%.2f) %d(%d,%.2f)\n",node,level[node],sigma[node],adjacencyList[position],level[adjacencyList[position]],sigma[adjacencyList[position]]);
+            // printf("g_delta[%d]: %f\n",g_csrE[position],g_delta[g_csrE[position]]);
+
+        }
+    }
+
+    if(node!=sourceID){
+        BC[node]+=g_delta[node];
+    }
+
+}
+
+__global__ void resetBC_delta_normal(float* delta,int size){
+    register const int idx = threadIdx.x + blockIdx.x * blockDim.x; // [0-newendID] [newnedID+1 - 2*newnedID+2]
+    if(idx < size){
+        delta[idx] = 0.0f;
+        // printf("delta[%d]: %.2f\n",idx,delta[idx]);
+    }
+}
+
+__global__ void find_S2neighbor_min_normal(int sourceID, int* newNodesID_min,int newSourceNodesDegree, int* dist_n,int* Source_dist,int V,int* max_depth){
+    // 計算全域 thread index
+    const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    
+    if (idx >= V) return;
+    
+    // 如果該節點就是來源節點，直接設定為 0
+    if (idx == sourceID) {
+        newNodesID_min[idx]   = 0;
+        Source_dist[sourceID] = 0;
+    } else {
+        int min_distance = INT_MAX;
+        // 使用 loop unrolling（如果 newSourceNodesDegree 較小且固定）
+        #pragma unroll
+        for (int current_source = 0; current_source < newSourceNodesDegree; ++current_source) {
+            // 使用 __ldg() 提升唯讀全域記憶體的存取效能
+            int d = __ldg(&dist_n[current_source * V + idx]);
+            if (d < min_distance) {
+                min_distance = d;
+            }
+        }
+        int new_min_dist = min_distance + 1;
+        // 更新全域記憶體
+        Source_dist[idx]     = new_min_dist;
+        newNodesID_min[idx]  = new_min_dist;
+
+        // 使用 atomicMax 來更新全域的 max_depth
+        atomicMax(max_depth, new_min_dist);
+        // printf("max_depth: %d\n",max_depth);
+    }
+
+    // printf("newNodesID_min[%d][%d]: %d\n",v_Idx,v_ID,newNodesID_min[v_Idx]);
+    // printf("Source_dist[%d]: %d\n",v_ID,Source_dist[v_ID]);
+    // printf("max_depth: %d\n",max_depth);
+}
+
+__global__ void find_S2neighbor_sigma_normal(int sourceID,int newSourceNodesDegree, int* dist_n,int* sigma_n,int* Source_dist,int* Source_sigma,int V){
+
+    // 計算全域 thread index
+    const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+    if (idx >= V) return;
+    
+    // 如果是來源節點，僅讓一個 thread 進行初始化
+    if (idx == sourceID) {
+        Source_dist[sourceID] = 0;
+        Source_sigma[sourceID] = 1;  
+    } else {
+        // 先讀取全域資料到暫存器
+        const int src_dist = Source_dist[idx];
+        int sigma_sum = 0;
+        
+        // 迴圈展開，可根據 newSourceNodesDegree 固定長度進行 unroll
+        #pragma unroll
+        for (int current_source = 0; current_source < newSourceNodesDegree; ++current_source) {
+            // 使用 __ldg() 從唯讀快取存取資料
+            int d = __ldg(&dist_n[current_source * V + idx]);
+            if ((src_dist - 1) == d) {
+                sigma_sum += __ldg(&sigma_n[current_source * V + idx]);
+            }
+        }
+        // 將計算結果寫回全域記憶體
+        Source_sigma[idx] = sigma_sum;
+    }
+    // printf("Source_sigma[%d]: %d\n",v_ID,Source_sigma[v_ID]);
+
+}
+
+__global__ void S_dist_count_normal(int* count_table,int* newNodesID_min,int V){
+    // 計算全域 thread index
+    const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    
+    if (idx >= V) return;
+
+    atomicAdd(&count_table[newNodesID_min[idx]], 1);
+    // printf("g_max_depth:%d\n",*max_depth);
+}
+
+__global__ void g_newNodesID_arr_reset(int* newNodeID_arr,int startnode,int endnode){
+    // 計算全域 thread index
+    const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    
+    if (idx >=startnode && idx<=endnode){
+        newNodeID_arr[idx]=idx;
+    }
+}
+
+__global__ void deltaCalculation_s_normal(int* g_csrV,int* g_csrE,float* g_delta,int* sigma,int* dist,int blocknum,int j,int startposition,int size, int NOneighbor,int V,int sourceID,float* BC,int* newNodeID_arr,int max_depth){
+
+    register const int bid = blockIdx.x + j*blocknum;
+    register const int pos = startposition + bid;
+    register const int node = newNodeID_arr[pos];
+    if(bid >= size || node == -1 ) return;
+    // printf("bid: %d size: %d traverse node: %d\n",bid,size,node);
+    register const int degree = g_csrV[node+1] - g_csrV[node];
+    register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0));
+
+    for(int i=0;i<threadOffset;i++) {
+        register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x;
+        
+        if(position < g_csrV[node+1] && (dist[NOneighbor*V+node]) - 1 == dist[NOneighbor*V+g_csrE[position]]){
+            // printf("traverse node: %d\n",node);
+            atomicAdd(&g_delta[g_csrE[position]],((float)sigma[NOneighbor*V+g_csrE[position]]/sigma[NOneighbor*V+node])*(1.0+g_delta[node]));
+            // printf("%d->g_csrE[%d]: %d delta[%d]: %.2f\n",node,position,g_csrE[position],g_csrE[position],g_delta[g_csrE[position]]);
+            //printf("%d(%d,%.2f) %d(%d,%.2f)\n",node,level[node],sigma[node],adjacencyList[position],level[adjacencyList[position]],sigma[adjacencyList[position]]);
+            // printf("g_delta[%d]: %f\n",g_csrE[position],g_delta[g_csrE[position]]);
+
+        }
+    }
+
+    if(node!=sourceID){
+        BC[node]+=g_delta[node];
+    }
+
+}
+
+    #pragma endregion
+//============================================================================
+    #pragma region D1_
+__global__ void allBC_n_D1(int* g_csrV,int* g_OricsrV,int* g_csrE ,int* nextQueueSize,int* currentQueue,int* nextQueue,int* dist,int* sigma,int blocknum,int j,int size, int NOneighbor,int V){
+    register const int bid = blockIdx.x + j * blocknum; // 0 + 0 * INT_MAX
+
+    if(bid > size || currentQueue[bid] == -1) return; //大於currentQueueSize
+
+    register const int node = currentQueue[bid];
+    register const int degree = g_OricsrV[node+1] - g_csrV[node];
+    register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0)); //需要看的鄰居，疊代次數
+    register float     old;
+    // printf("bid: %d,node: %d ,degree: %d, blockDim.x: %d\n",bid,node,degree,blockDim.x);
+    for(int i=0;i<threadOffset;i++){
+        register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x;
+        if(position < g_OricsrV[node+1] ){
+            // printf("node: %d ,position: %d, dist: %d\n",node,g_csrE[position],dist[g_csrE[position]]);
+            if(dist[NOneighbor*V+node] + 1.0 < dist[NOneighbor*V+g_csrE[position]]){
+                //Unweighted
+                // dist[g_csrE[position]] = dist[node] + 1;
+                //Weighted
+                old = atomicMin(&dist[NOneighbor*V+g_csrE[position]], (dist[NOneighbor*V+node] + 1.0));
+                // printf("old: %d, dist: %d\n",old,dist[g_csrE[position]]);
+                if(old != dist[NOneighbor * V + g_csrE[position]]){
+                int next = atomicAdd(nextQueueSize,1);
+                nextQueue[next] = __ldg(&g_csrE[position]);
+                // printf("nextQueue[%d]: %d\n",next,nextQueue[next]);
+                    // printf("%d(%d) %d(%d)\n",node,level[node],adjacencyList[position],level[adjacencyList[position]]);
+                    // printf("A: %d(%.2f) --> %d(%.2f)\n",node,dist[node],adjacencyList[position],dist[adjacencyList[position]]);
+                }
+            }
+            if(dist[NOneighbor*V+node] + 1 == dist[NOneighbor*V+g_csrE[position]]){
+                atomicAdd(&sigma[NOneighbor*V+g_csrE[position]],sigma[NOneighbor*V+node]);
+                //printf("B: %d(%f) --> %d(%f)\n",node,sigma[node],adjacencyList[position],sigma[adjacencyList[position]]);
+            }
+            // printf("node: %d ,dist: %d, sigma: %d \n",g_csrE[position],dist[g_csrE[position]],sigma[g_csrE[position]]);
+        }
+    }
+}
+    
+__global__ void deltaCalculation__n_D1(int* g_csrV,int* g_OricsrV,int* g_csrE,float* g_delta,int* sigma,int* stack,int* dist,int blocknum,int j,int startposition,int size, int NOneighbor,int V,int sourceID,float* BC,int* representNode){
+
+    register const int bid = blockIdx.x + j*blocknum;
+    register const int node = stack[startposition + bid];
+    // printf("traverse node: %d\n",node);
+    if(bid >= size || node == -1) return;
+
+    register const int degree = g_OricsrV[node+1] - g_csrV[node];
+    register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0));
+
+    for(int i=0;i<threadOffset;i++) {
+        register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x;
+        // printf("%d->g_csrE[%d]: %d\n",node,position,g_csrE[position]);
+        if(position < g_OricsrV[node+1] && (dist[NOneighbor*V+node]) - 1 == dist[NOneighbor*V+g_csrE[position]]){
+            // printf("traverse node: %d\n",node);
+            atomicAdd(&g_delta[g_csrE[position]],((float)sigma[NOneighbor*V+g_csrE[position]]/sigma[NOneighbor*V+node])*(1.0+g_delta[node]));
+            //printf("%d(%d,%.2f) %d(%d,%.2f)\n",node,level[node],sigma[node],adjacencyList[position],level[adjacencyList[position]],sigma[adjacencyList[position]]);
+            // printf("g_delta[%d]: %f\n",g_csrE[position],g_delta[g_csrE[position]]);
+
+        }
+    }
+
+    if(node!=sourceID){
+        BC[node]+=g_delta[node]*representNode[sourceID];
+    }
+
+}
+
+__global__ void resetBC_value_n_D1(int* dist,int* f1,int* sigma,float* delta,int* stack,int* level ,int sourceID,int NOneighbor, int V,int* represent){
+    register const int idx = threadIdx.x + blockIdx.x * blockDim.x; // [0-newendID] [newnedID+1 - 2*newnedID+2]
+
+    if(idx < V){
+        dist[NOneighbor*V+idx]  = 100000;
+        sigma[NOneighbor*V+idx] = 0;
+        delta[idx] = represent[idx]-1.0f;
+        
+        level[idx] = -1;
+        f1[idx]    = -1;
+    }
+    f1[0]    = sourceID;
+    stack[0] = sourceID;
+    if(idx == sourceID){
+        dist[NOneighbor*V+idx]  = 0;
+        sigma[NOneighbor*V+idx] = 1;
+        level[idx] = 0;
+    }
+
+    // if(idx < size){
+    //     printf("dist[%d][%d]: %d\n",NOneighbor,v_ID,dist[(NOneighbor)*V+v_ID]);
+    //     printf("delta[%d]: %.2f\n",v_ID,delta[v_ID]);
+    // }
+}
+
+__global__ void resetBC_delta_D1(float* delta,int size,int* represent){
+    register const int idx = threadIdx.x + blockIdx.x * blockDim.x; // [0-newendID] [newnedID+1 - 2*newnedID+2]
+    if(idx < size){
+        delta[idx] = represent[idx]-1.0f;
+        // printf("delta[%d]: %.2f\n",idx,delta[idx]);
+    }
+}
+
+__global__ void deltaCalculation_s_D1(int* g_csrV,int* g_OricsrV,int* g_csrE,float* g_delta,int* sigma,int* dist,int blocknum,int j,int startposition,int size, int NOneighbor,int V,int sourceID,float* BC,int* newNodeID_arr,int max_depth,int* represent){
+
+    register const int bid = blockIdx.x + j*blocknum;
+    register const int pos = startposition + bid;
+    register const int node = newNodeID_arr[pos];
+    if(bid >= size || node == -1 ) return;
+    // printf("bid: %d size: %d traverse node: %d\n",bid,size,node);
+    register const int degree = g_OricsrV[node+1] - g_csrV[node];
+    register const int threadOffset = (int)ceil(degree/(blockDim.x*1.0));
+
+    for(int i=0;i<threadOffset;i++) {
+        register const int position = g_csrV[node] + threadIdx.x + i * blockDim.x;
+        
+        if(position < g_OricsrV[node+1] && (dist[NOneighbor*V+node]) - 1 == dist[NOneighbor*V+g_csrE[position]]){
+            // printf("traverse node: %d\n",node);
+            atomicAdd(&g_delta[g_csrE[position]],((float)sigma[NOneighbor*V+g_csrE[position]]/sigma[NOneighbor*V+node])*(1.0+g_delta[node]));
+            // printf("%d->g_csrE[%d]: %d delta[%d]: %.2f\n",node,position,g_csrE[position],g_csrE[position],g_delta[g_csrE[position]]);
+            //printf("%d(%d,%.2f) %d(%d,%.2f)\n",node,level[node],sigma[node],adjacencyList[position],level[adjacencyList[position]],sigma[adjacencyList[position]]);
+            // printf("g_delta[%d]: %f\n",g_csrE[position],g_delta[g_csrE[position]]);
+
+        }
+    }
+
+    if(node!=sourceID){
+        BC[node]+=g_delta[node]*represent[sourceID];
+    }
+
+}
+    
+__global__ void find_S2neighbor_min_D1(int sourceID, int* newNodesID_min,int newSourceNodesDegree, int* dist_n,int* Source_dist,int V,int* max_depth){
+    // 計算全域 thread index
+    const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    
+    if (idx >= V) return;
+    
+    // 如果該節點就是來源節點，直接設定為 0
+    if (idx == sourceID) {
+        newNodesID_min[idx]   = 0;
+        Source_dist[sourceID] = 0;
+    } else {
+            int min_distance = INT_MAX;
+            // 使用 loop unrolling（如果 newSourceNodesDegree 較小且固定）
+            #pragma unroll
+            for (int current_source = 0; current_source < newSourceNodesDegree; ++current_source) {
+                // 使用 __ldg() 提升唯讀全域記憶體的存取效能
+                int d = __ldg(&dist_n[current_source * V + idx]);
+                if (d < min_distance) {
+                    min_distance = d;
+                }
+            }
+            int new_min_dist = min_distance + 1;
+            // 更新全域記憶體
+            Source_dist[idx]     = new_min_dist;
+            newNodesID_min[idx]  = new_min_dist;
+
+            // 使用 atomicMax 來更新全域的 max_depth
+            if(min_distance!=100000){
+                atomicMax(max_depth, new_min_dist);
+            }
+            // printf("max_depth: %d\n",max_depth);
+    }
+
+    // printf("newNodesID_min[%d][%d]: %d\n",v_Idx,v_ID,newNodesID_min[v_Idx]);
+    // printf("Source_dist[%d]: %d\n",v_ID,Source_dist[v_ID]);
+    // printf("max_depth: %d\n",max_depth);
+}
+
+    #pragma endregion
+
+//============================================================================
+    #pragma region D1_AP
+//初始component內部的所有node以及source的dist & sigma(適用於有切AP的node 以下都是)
 __global__ void resetBC_value_n(int* dist,int* f1,int* sigma,float* delta,int* stack,int* level,struct newID_info* g_newID_infos ,int target,int NOneighbor,int size, int V,int* newNodesID_arr,int* comp_newCsrOffset, int compID){
     register const int idx = threadIdx.x + blockIdx.x * blockDim.x; // [0-newendID] [newnedID+1 - 2*newnedID+2]
     register const int comp_idx = idx + comp_newCsrOffset[compID];
@@ -6899,6 +7255,7 @@ __global__ void resetBC_value_n(int* dist,int* f1,int* sigma,float* delta,int* s
     //     printf("delta[%d]: %.2f\n",v_ID,delta[v_ID]);
     // }
 }
+
 
 __global__ void resetBC_delta(float* delta,struct newID_info* g_newID_infos,int size,int* newNodesID_arr,int* comp_newCsrOffset, int compID){
     register const int idx = threadIdx.x + blockIdx.x * blockDim.x; // [0-newendID] [newnedID+1 - 2*newnedID+2]
@@ -6976,7 +7333,7 @@ __global__ void deltaCalculation_n(int* g_csrV,int* g_csrE,float* g_delta,int* s
 
 }
 
-__global__ void deltaCalculation_s(int* g_csrV,int* g_csrE,float* g_delta,int* sigma,int* stack,int* dist,int blocknum,int j,int startposition,int size, int NOneighbor,int V,int sourceID,float* BC,struct newID_info* newID_infos,int* newNodeID_arr,int max_depth){
+__global__ void deltaCalculation_s(int* g_csrV,int* g_csrE,float* g_delta,int* sigma,int* dist,int blocknum,int j,int startposition,int size, int NOneighbor,int V,int sourceID,float* BC,struct newID_info* newID_infos,int* newNodeID_arr,int max_depth){
 
     register const int bid = blockIdx.x + j*blocknum;
     register const int pos = startposition + bid;
@@ -7067,10 +7424,8 @@ __global__ void find_S2neighbor_sigma(int* comp_newCsrOffset, int compID,int* ne
 
     // 如果是來源節點，僅讓一個 thread 進行初始化
     if (v_ID == sourceID) {
-        if (threadIdx.x == 0 && blockIdx.x == 0) {
             Source_dist[sourceID] = 0;
             Source_sigma[sourceID] = 1;
-        }
     } else {
         // 先讀取全域資料到暫存器
         const int src_dist = Source_dist[v_ID];
@@ -7091,6 +7446,7 @@ __global__ void find_S2neighbor_sigma(int* comp_newCsrOffset, int compID,int* ne
     // printf("Source_sigma[%d]: %d\n",v_ID,Source_sigma[v_ID]);
 
 }
+
 __global__ void combine_BC(float* BC,float* BC_temp,int* mapNodeID_New_to_Ori,int V){
     register const int idx = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -7133,434 +7489,693 @@ __global__ void printArray_float_n(float* array, int V , int NOneighbor) {
         printf("BC[%d] = %.2f\n", idx, array[NOneighbor*V+idx]);
     }
 }
+    #pragma endregion
 
 #pragma endregion
 
 
 //DMF 原版
 //比較用
-void DMF2018_par(struct CSR* _csr,float* _BCs) {
-    //D1 Folding
-    D1Folding(_csr);
-    //AP Process
-    AP_detection(_csr);
-    AP_Copy_And_Split(_csr); //先計算ap本尊的CC
-    struct newID_info* newID_infos = rebuildGraph(_csr);
+//DMF原版
+void DMF2018_par(struct CSR csr,float* _BCs) {
+    int avg_degree = (int)ceil(csr.csrESize/csr.csrVSize);
+    int V=csr.csrVSize-1;
+    int threadnum = 32;
+    int max_depth=0;
+    int* Vertex_computed = (int*)calloc(sizeof(int*),V);
 
-    // Allocate memory for sigma, dist, delta, and the stack S
-    int newnode_size = _csr->newEndID+1;
-    int*   S      = (int*)malloc(newnode_size* sizeof(int));      // S is a 2D array (stack)
-    int*   Source_sigma  = (int*)malloc(newnode_size* sizeof(int));     // sigma is a 1D array
-    int*   Source_dist   = (int*)malloc(newnode_size* sizeof(int));      // dist is a 1D array
-    float* delta  = (float*)malloc(newnode_size* sizeof(float)); // delta is a 1D array
-    int*   S_size = (int*)malloc(newnode_size* sizeof(int));    // S_size records the size of each level
-    int*   f1     = (int*)malloc(newnode_size * sizeof(int));
-    int*   f2     = (int*)malloc(newnode_size * sizeof(int));
-    int    f1_indicator;
-    int    f2_indicator;
-    int    S_indicator =0;
+    #pragma region malloc_cudamalloc
+    //CPU variable
+    int    currentQueueSize;
+    int*   stackOffset = (int*)calloc(V,sizeof(int));
+    //GPU MALLOC　variable
+    int*   g_stack;      
+    int*   g_sigma;     
+    int* g_dist;
+    int*   g_level;     
+    float* g_delta; 
+    int*   g_S_size;
+    int*   g_f1;
+    int*   g_f2;
+    int*   g_nextQueueSize; //用來回傳給CPU判別currentQueueSize，是否繼續traverse
+    int* g_csrV;
+    int* g_csrE;
+    float* g_BC;
+    int*   g_sigma_n;     
+    int*   g_dist_n;
+    int*   g_newNodesID_min;
+    int*   g_newNodesID_arr;
+    int*   g_max_depth;
+    int* g_count_table;
 
-    //計算avg_degree
-    int avg_degree = (int)ceil(_csr->D1foldingESize/newnode_size);
-    // printf("avg_degree: %d  D1foldingESize:%d ordinaryNodeCount: %d\n",avg_degree,_csr->D1foldingESize, _csr->ordinaryNodeCount);
-    int**   sigma = (int**)malloc((avg_degree+1) * sizeof(int*));     // sigma is a 2D array
-    int**   dist  = (int**)malloc((avg_degree+1) * sizeof(int*));     // sigma is a 2D array
-    vector<vector<int>> predecessors(newnode_size);   // Predecessor list
-    for (int i = 0; i < avg_degree; i++) {
-        dist [i] = (int*)malloc(newnode_size * sizeof(int)); // 每個ID的點都需要紀錄距離
-        sigma[i] = (int*)malloc(newnode_size * sizeof(int)); // 每個ID的點都需要紀錄路徑數量
-    }
+    // printf("start malloc\n");
+    cudaMalloc((void **)&g_stack,V * sizeof(int)); //用CPU的stack offset存每一層的位置
+    cudaMalloc((void **)&g_sigma,V * sizeof(int));
+    cudaMalloc((void **)&g_dist,V * sizeof(int));
+    cudaMalloc((void **)&g_level,V * sizeof(int));
+    cudaMalloc((void **)&g_delta,V * sizeof(float));
+    cudaMalloc((void **)&g_S_size,V*sizeof(int));
+    
+    cudaMalloc((void **)&g_f1, V * sizeof(int));
+    cudaMalloc((void **)&g_f2, V * sizeof(int));
+    cudaMalloc((void **)&g_nextQueueSize,sizeof(int));
+    cudaMalloc((void **)&g_csrV, (V+1) * sizeof(int));
+    cudaMalloc((void **)&g_csrE, csr.csrESize * sizeof(int));
+    cudaMalloc((void **)&g_BC, V * sizeof(float));
+    cudaMalloc((void **)&g_sigma_n, V * avg_degree * sizeof(int)); //2d array紀錄鄰居source的路徑數量
+    cudaMalloc((void **)&g_dist_n,  V * avg_degree * sizeof(int)); //2d array紀錄鄰居source的距離
+    cudaMalloc((void**)&g_count_table, sizeof(int) * V);
+    cudaMalloc((void**)&g_newNodesID_min, sizeof(int) * V);
+    cudaMalloc((void**)&g_newNodesID_arr, sizeof(int) * V);
+    cudaMalloc((void**)&g_max_depth, sizeof(int));
+    cudaMemcpy(g_csrV , csr.csrV ,  (V+1) * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemcpy(g_csrE , csr.csrE ,  csr.csrESize * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemset(g_BC, 0.0f, V * sizeof(float));
+    #pragma endregion malloc_cudamalloc
+    // printf("avg_degree: %d\n",avg_degree);
+    
+    #pragma region DMF
 
-
-    float*   BC_temp = (float*)malloc(newnode_size* sizeof(float));      //存放切AP後的graph，各個點的BC值，方便在最後階段把正確BC值累加至原始graph的BC
-    memset(BC_temp, 0.0f, sizeof(float) * newnode_size);
-    // Allocate memory for vertex coverage
-    bool *Vertex_computed = (bool*)calloc(sizeof(bool), newnode_size); //確認node已被計算過BC值
-
-
-    //用degree排序NodeID_New
-    const int oriEndNodeID = _csr->endNodeID - _csr->apCloneCount; //原本graph的endNodeID
-    // printf("newEndID: %d endNodeID: %d _csr->ordinaryNodeCount: %d D1foldingESize: %d\n",_csr->newEndID,_csr->endNodeID,_csr->ordinaryNodeCount,_csr->D1foldingESize);
-
-    int* newNodesID_arr     = (int*)malloc(sizeof(int) * newnode_size);
-    int* newNodesID_min     = (int*)malloc(sizeof(int) * newnode_size); //每個component的node存最短距離，方便backward前的排序
-    int* newNodesDegree_arr = (int*)malloc(sizeof(int) * newnode_size);
-    sortEachComp_NewID_with_degree(_csr, newNodesID_arr, newNodesDegree_arr);
-
-
-    #pragma region compute_DMF
-    for(int compID = 0 ; compID <= _csr->compEndID ; compID ++){
-        // printf("compID = %d\n", compID);
-        int comp_Size =  _csr->comp_newCsrOffset[compID + 1]-_csr->comp_newCsrOffset[compID];
-
-        for(int newID_idx = _csr->comp_newCsrOffset[compID] ; newID_idx < _csr->comp_newCsrOffset[compID+1] ; newID_idx ++){
-            int sourceNewID = newNodesID_arr[newID_idx];
-            int sourceOldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-            int newSourceNodesDegree   = _csr->orderedCsrV[sourceNewID + 1] - _csr->orderedCsrV[sourceNewID];
-            // printf("[COMP %d]newID: %d, oldID:%d degree %d \n",compID, sourceNewID, sourceOldID, newSourceNodesDegree);
-            /*
-             * 不做：
-             * 1. 已經 nodeDone = 1 的 node
-             * 2. CloneAP (藉由 (sourceOldID > oriEndNodeID)判斷一個node是不是 CloneAP) 
-             * 3. sourceNewID的鄰居都沒有做過
-            */
-
-            bool N_flag    =false; //當node的鄰居是否有做過
-            for(int new_nidx = _csr->orderedCsrV[sourceNewID] ; new_nidx < _csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++){
-                int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
-                // printf("%d,",new_nid);
-                if(Vertex_computed[new_nid] == true){
-                   N_flag=true;
-                   break; 
-                }
+    for (int sourceNewID = csr.startNodeID; sourceNewID <= csr.endNodeID; ++sourceNewID) {
+        int newSourceNodesDegree   = csr.csrNodesDegree[sourceNewID];
+        // printf("[COMP %d]newID: %d, oldID:%d degree %d \n",compID, sourceNewID, sourceOldID, newSourceNodesDegree);
+        /*
+         * 不做：
+         * 1. 已經 nodeDone = 1 的 node
+         * 2. CloneAP (藉由 (sourceOldID > oriEndNodeID)判斷一個node是不是 CloneAP) 
+         * 3. sourceNewID的鄰居都沒有做過
+        */
+        bool N_flag    =false; //當node的鄰居是否有做過
+        for(int new_nidx = csr.csrV[sourceNewID] ; new_nidx < csr.csrV[sourceNewID + 1] ; new_nidx ++){
+            int new_nid = csr.csrE[new_nidx]; //new_nid為curNewID的鄰居
+            // printf("%d,",new_nid);
+            if(Vertex_computed[new_nid] == true){
+               N_flag=true;
             }
-            // printf("newNodesDegree_arr[%d]: %d\n",sourceNewID,newNodesDegree_arr[sourceNewID]);
-            // printf("}\n");
-            if(Vertex_computed[sourceNewID] || (newNodesDegree_arr[sourceNewID] > avg_degree) || N_flag){
-                continue;
-            }
+        }
+        // printf("newNodesDegree_arr[%d]: %d\n",sourceNewID,newNodesDegree_arr[sourceNewID]);
+        // printf("}\n");
+        if(Vertex_computed[sourceNewID] || (newSourceNodesDegree != 2) || N_flag){ //(newNodesDegree_arr[sourceNewID] > avg_degree)
+            continue;
+        }
 
+        // printf("===========Do SourceID: %d=================\n",sourceNewID);
 
-            // printf("sourceNewID: %d\n",sourceNewID);
-            //計算SourceID鄰居的dist以及sigma (forward)
-            for(int NeighborSource_index = _csr->orderedCsrV[sourceNewID]; NeighborSource_index < _csr->orderedCsrV[sourceNewID + 1] ; ++NeighborSource_index) {
-                int NeighborSourceID = _csr->orderedCsrE[NeighborSource_index];
-                Vertex_computed[NeighborSourceID]=true;
-                // printf("NeighborSourceID: %d\n",NeighborSourceID);
+        //計算SourceID鄰居的dist以及sigma (forward)
+        for(int NeighborSource_index = csr.csrV[sourceNewID]; NeighborSource_index < csr.csrV[sourceNewID + 1] ; ++NeighborSource_index) {
+            int NeighborSourceID = csr.csrE[NeighborSource_index];
+            Vertex_computed[NeighborSourceID]=true;
+            // printf("NeighborSourceID: %d\n",NeighborSourceID);
+            //forward
+            int NOneighbor = ( NeighborSource_index - csr.csrV[sourceNewID] ); //從0開始記錄鄰居的dist和sigma
 
-
-
-                predecessors.assign(newnode_size, vector<int>());  // Reset Successors with empty vectors
-                //forward
-                int NOneighbor= ( NeighborSource_index - _csr->orderedCsrV[sourceNewID] ); //從0開始記錄鄰居的dist和sigma
-                for (int i = 0; i <= _csr->newEndID; i++) {
-                    sigma[NOneighbor][i] =  0;
-                    dist[NOneighbor][i]  = -1;
-                    delta[i] = (float)newID_infos[i].w - 1.0f;
+            resetBC_value__n<<<ceil((double)V/64.0),min(V,64)>>>(g_dist_n,g_f1,g_sigma_n,g_delta,g_stack,g_level,NeighborSourceID,NOneighbor,V);
+            CHECK(cudaDeviceSynchronize());
+            cudaMemset(g_nextQueueSize,0,sizeof(int));
+            currentQueueSize = 1;
+            int level =0;
+            // BFS forward phase: frontier-based BFS with extra mallocs
+            while (currentQueueSize>0) { //!qIsEmpty(current_queue)
+                // printf(" forward level: %d currentQueueSize: %d\n",level,currentQueueSize);
+                // printf("currentQueueSize: %d\n",currentQueueSize);
+                // Allocate new memory for next_queue in each iteration
+                int *g_currentQueue;
+                int *g_nextQueue;
+                if(level% 2 == 0){
+                    g_currentQueue = g_f1;
+                    g_nextQueue = g_f2;
                 }
-
-
-                sigma[NOneighbor][NeighborSourceID] = 1;
-                dist[NOneighbor][NeighborSourceID]  = 0;
-                f1_indicator    = 0;
-                f2_indicator    = 0;
-                S_indicator     = 0;
-                // Re-initialize current_queue
-                f1[f1_indicator++] = NeighborSourceID;
-                int level = 0;
-                while (f1_indicator>0) { 
-                    // printf("level: %d\n",level);
-
-                    // Allocate new memory for next_queue in each iteration
-                    int* currentQueue;
-                    int* nextQueue;
-                    if(level% 2 == 0){
-                        currentQueue = f1;
-                        nextQueue = f2;
-                    }
-                    else{
-                        currentQueue = f2;
-                        nextQueue = f1;
-                    }
-
-                    for(int v=0; v<f1_indicator; v++) {
-                        int u = currentQueue[v];
-                        S[S_indicator++] = u;  // Put node u into its level
-
-                        // Traverse the adjacent nodes in CSR format
-                        for (int i = _csr->orderedCsrV[u]; i < _csr->orderedCsrV[u + 1]; ++i) {
-                            int w = _csr->orderedCsrE[i]; //w為u的鄰居
-
-                            // If w has not been visited, update distance and add to next_queue
-                            if (dist[NOneighbor][w] < 0) {
-                                dist[NOneighbor][w] = dist[NOneighbor][u] + 1;
-                                nextQueue[f2_indicator++] = w;
-                            }
-
-                            // When a shortest path is found
-                            if (dist[NOneighbor][w] == dist[NOneighbor][u] + 1) {
-                                sigma[NOneighbor][w] += sigma[NOneighbor][u];
-                                predecessors[w].push_back(u);
-                            }
-                        }
-                    }
-                    // Free current_queue and set it to next_queue for the next iteration
-                    f1_indicator = f2_indicator;
-                    f2_indicator = 0;
-                    level++;
+                else{
+                    g_currentQueue = g_f2;
+                    g_nextQueue = g_f1;
                 }
-
-
-                //backward
-                for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
-                    int w = S[d];
-                    for(int v: predecessors[w]){
-                        delta[v] += (sigma[NOneighbor][v] / (float)sigma[NOneighbor][w]) * (1.0 + delta[w]);
-                    }
-                    // for (int j = csr.csrV[w]; j < csr.csrV[w + 1]; ++j) {
-                    //     int v = csr.csrE[j];
-                    //     if (dist[NOneighbor][v] == dist[NOneighbor][w] - 1) {
-                    //         delta[v] += (sigma[NOneighbor][v] / (float)sigma[NOneighbor][w]) * (1.0 + delta[w]);
-                    //     }
-                    // }
-                    BC_temp[w] += delta[w] * newID_infos[NeighborSourceID].w;
-                }
-                //print dist and sigma
-                #pragma region print
-                // printf("==========S: %d==========\n",NeighborSourceID);
-                // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
-                //     printf("dist[%d]: %d\n",nodeID,dist[NOneighbor][nodeID]);
-                // }
-                // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
-                //     printf("sigma[%d]: %d\n",nodeID,sigma[NOneighbor][nodeID]);
-                // }
-                // for(int nodeID=csr.startNodeID ; nodeID<=csr.endNodeID ; nodeID++){
-                //     printf("delta[%d]: %.2f\n",nodeID,delta[nodeID]);
-                // }
-                #pragma endregion
-            }
-
             
-            Vertex_computed[sourceNewID] = true;
-            //計算SourceID本身的dist以及sigma (forward)
-            for (int i = 0; i <= _csr->newEndID; i++) {
-                Source_sigma[i]  =    0;
-                Source_dist[i]   =   -1;
-                delta[i]         = (float)newID_infos[i].w - 1.0f;
-                S[i]             =    i;
-                newNodesID_min[i]=   -1;
-            }
-            
-            //component內的點去找sigma
-            //先找出每個source鄰居走到v_ID的最短距離
-            
-            for(int v_Idx = _csr->comp_newCsrOffset[compID] ; v_Idx < _csr->comp_newCsrOffset[compID + 1] ; v_Idx ++){
-                int v_ID = newNodesID_arr[v_Idx];
-                int min_distance=INT32_MAX;
-                if(v_ID == sourceNewID){
-                    newNodesID_min[v_Idx] = 0;
-                }else{
-                    for (int current_source = 0; current_source < newSourceNodesDegree; ++current_source) { //每個S的鄰居到v_ID的距離
-                        min_distance=min(min_distance,dist[current_source][v_ID]);
-                    }
-                    int new_min_dist = (min_distance+1);
-                    Source_dist[v_ID] = new_min_dist;
-                    newNodesID_min[v_Idx] = new_min_dist;
+                stackOffset[level+1] = currentQueueSize + stackOffset[level];
+                int blocknum = (currentQueueSize < INT_MAX) ? currentQueueSize : INT_MAX;
+                //平行跑BFS
+                for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++){
+                    allBC_n<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist_n,g_sigma_n,INT_MAX,i,currentQueueSize,NOneighbor,V);
+                    CHECK(cudaDeviceSynchronize());
                 }
+                cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost);
+                cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(int),cudaMemcpyDeviceToDevice);
+                cudaMemset(g_nextQueueSize,0,sizeof(int));
+                // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_dist_n,V,NOneighbor);
+                // CHECK(cudaDeviceSynchronize());
+                level++;
             }
-            //先找出每個source鄰居走到v_ID的sigma
-            for(int v_Idx = _csr->comp_newCsrOffset[compID] ; v_Idx < _csr->comp_newCsrOffset[compID + 1] ; v_Idx ++){
-                int v_ID = newNodesID_arr[v_Idx];
+            //backward
+            for (int d = level - 1; d >= 0; --d) {
+                // std::cout << "backward level(" << d << "):\t" << stackOffset[d+1] - stackOffset[d] << std::endl;
+                int degree =(stackOffset[d+1] - stackOffset[d]);
+                int blocknum = (degree < INT_MAX) ? degree : INT_MAX;
                 
-                if(v_ID==sourceNewID){
-                    Source_dist[sourceNewID] =0;
-                    Source_sigma[sourceNewID]=1;
-                }else{
-
-                    for (int current_source = 0; current_source < newSourceNodesDegree; ++current_source) { //每個S的鄰居到v_ID的距離
-                        if( (Source_dist[v_ID]-1) == dist[current_source][v_ID]){ //current_source距離v_ID是最短
-                            Source_sigma[v_ID]+=sigma[current_source][v_ID];
-                        }
-                    }
+                for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++){
+                    deltaCalculation__n<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_delta,g_sigma_n,g_stack,g_dist_n,INT_MAX,i,stackOffset[d],degree,NOneighbor,V,NeighborSourceID,g_BC);
                 }
+                CHECK(cudaDeviceSynchronize());
+                // printArray_float<<<ceil(V/64.0),min(V,64)>>>(g_delta,V);
             }
             
-            // for (int i = _csr->comp_newCsrOffset[compID]; i < _csr->comp_newCsrOffset[compID + 1]; i++) {
-            //     int v_ID = newNodesID_arr[i];
-            //     printf("[Source %d]dist[%d]: %d\n",sourceNewID,v_ID,Source_dist[v_ID]);
-            // }
+            // printf("[N SourceID: %d delta]\n",NeighborSourceID);
+            // printArray_float_n<<<ceil(V/64.0),min(V,64)>>>(g_delta,V,0);
+            // CHECK(cudaDeviceSynchronize());
+            // break;
+        }
 
-            // for (int i = _csr->comp_newCsrOffset[compID]; i < _csr->comp_newCsrOffset[compID + 1]; i++) {
-            //     int v_ID = newNodesID_arr[i];
-            //     printf("[Source %d]sigma[%d]: %d\n",sourceNewID,v_ID,Source_sigma[v_ID]);
-            // }
-            // for(int v_Idx = _csr->comp_newCsrOffset[compID] ; v_Idx < _csr->comp_newCsrOffset[compID + 1] ; v_Idx ++){
-            //     int v_ID = newNodesID_arr[v_Idx];
-            //     printf("newNodesID_min[%d][%d]: %d\n",v_ID,v_Idx,newNodesID_min[v_Idx]);
-            // }
+        #pragma region DMF_source
+        // //初始delta
+        resetBC_delta_normal<<<ceil(V/64.0),min(V,64)>>>(g_delta,V);
+        // cudaMemset(g_delta,0.0f,V*sizeof(float));
+        CHECK(cudaDeviceSynchronize());
+        Vertex_computed[sourceNewID]=true;
+        //找min distance
+        cudaMemset(g_max_depth,0,sizeof(int));
+        cudaMemset(g_count_table,0,sizeof(int)*V);
 
-            //排序為了找到backward的順序
-            quicksort_nodeID_with_degree(S, newNodesID_min, _csr->comp_newCsrOffset[compID], (_csr->comp_newCsrOffset[compID+1]-1));
-            // printf("_csr->comp_newCsrOffset[compID]: %d  _csr->comp_newCsrOffset[compID+1]: %d\n",_csr->comp_newCsrOffset[compID],_csr->comp_newCsrOffset[compID+1]);
-            // for (int i = 0; i < newnode_size; i++) {
-            //   printf("S[%d]: %d\n",i,S[i]);
-            // }
-
-
-            //由近到遠
-            //範圍是 ( _csr->comp_newCsrOffset[compID] ~ _csr->comp_newCsrOffset[compID+1] )
-            //_csr->comp_newCsrOffset[compID]是source所以不算
-
-            for (int d = _csr->comp_newCsrOffset[compID]; d < _csr->comp_newCsrOffset[compID+1]; d++) {
-                int w = newNodesID_arr[S[d]];
-                // printf("-----BackID[%d]: %d-----\n",d,w);
-                for (int i = _csr->orderedCsrV[w]; i < _csr->orderedCsrV[w + 1]; ++i) {
-                    int v = _csr->orderedCsrE[i];
-                    if (Source_dist[v] == Source_dist[w] - 1 ) {
-                       delta[v] += (Source_sigma[v] / (float)Source_sigma[w]) * (1.0 + delta[w]);
-                    }
-                }
-                if(w!=sourceNewID){
-                    BC_temp[w] += delta[w] * newID_infos[sourceNewID].w ;
-                }
-            }
+        //先找出每個source鄰居走到v_ID的最短距離
+        find_S2neighbor_min_normal<<<ceil(V/64.0),min(V,64)>>>(sourceNewID,g_newNodesID_min,newSourceNodesDegree,g_dist_n,g_dist,V,g_max_depth);
+        CHECK(cudaDeviceSynchronize());
         
-        }
-        break;
+        // cudaMemcpy(&max_depth,g_max_depth,sizeof(int),cudaMemcpyDeviceToHost);
+        // printf("============g_newNodesID_min============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_min,V,0);
+        // CHECK(cudaDeviceSynchronize());
+        //先找出每個source鄰居走到v_ID的sigma
+        find_S2neighbor_sigma_normal<<<ceil(V/64.0),min(V,64)>>>(sourceNewID,newSourceNodesDegree,g_dist_n,g_sigma_n,g_dist,g_sigma,V);
+        CHECK(cudaDeviceSynchronize());
 
-    }
+        // printf("============g_sigma============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_sigma,V,0);
+        // CHECK(cudaDeviceSynchronize());
 
-    #pragma endregion
+        //計數dist的數量
+        S_dist_count_normal<<<ceil(V/64.0),min(V,64)>>>(g_count_table,g_newNodesID_min,V);
+        g_newNodesID_arr_reset<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_arr,csr.startNodeID,csr.endNodeID);
+        CHECK(cudaDeviceSynchronize());
 
+        // printf("============g_count_table============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_count_table,V,0);
+        // CHECK(cudaDeviceSynchronize());
+        // printf("[before]============g_newNodesID_arr============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_arr,V,0);
+        // CHECK(cudaDeviceSynchronize());
 
+        //sort node從距離遠到近
+        int range_begin = csr.startNodeID;
+        int range_end = (csr.endNodeID)+1;
+        // printf("%d-%d\n",range_begin,range_end);
+        // cudaMemcpy(&range_begin, &csr.startNodeID, sizeof(int), cudaMemcpyDeviceToHost);
+        // cudaMemcpy(&range_end, &(csr.endNodeID)+1, sizeof(int), cudaMemcpyDeviceToHost);
+        thrust::device_ptr<int> d_keys   = thrust::device_pointer_cast(g_newNodesID_min);
+        thrust::device_ptr<int> d_values = thrust::device_pointer_cast(g_newNodesID_arr);
+        thrust::sort_by_key(
+            d_keys   + range_begin,
+            d_keys   + range_end,
+            d_values + range_begin
+        );
 
-    #pragma region find_otherNode
-    //找尚未done的node
-    int*   notDonelist  = (int*)malloc(newnode_size * sizeof(int));      // dist is a 1D array
-    int    notDone_size = 0;
-    // printf("  _csr->newEndID: %d\n", _csr->newEndID);
-    for(int nodeID = 0 ; nodeID <= _csr->newEndID ;  nodeID++){
-        if(Vertex_computed[nodeID] == false ){
-            notDonelist[notDone_size++]=nodeID;
-        }
-    }
+        // printf("[after]============g_newNodesID_arr============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_arr,V,0);
+        // CHECK(cudaDeviceSynchronize());
 
-    #pragma endregion
-
-    #pragma region otherNode_BC
-    //Traverse
-
-    for(int sourceNewIdx = 0 ; sourceNewIdx < notDone_size ; sourceNewIdx ++){
-        int sourceNewID = notDonelist[sourceNewIdx];
-        int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-        int sourceType = _csr->nodesType[oldID];
-        // printf("[NOT DONE]sourceNewID: %d oldID: %d\n",sourceNewID,oldID);
-
-        //變數值使用NewID
-        for (int i = 0; i <= _csr->newEndID; i++) {
-            Source_sigma[i] =  0;
-            Source_dist[i]  = -1;
-            //照該node的reach點數來初始，代表其他點看到這點至少看過reach-1個點在這個node之後。
-            delta[i] = (float)newID_infos[i].w - 1.0f;
-        }
-
-        //initial value
-        Source_sigma[sourceNewID] = 1;
-        Source_dist[sourceNewID]  = 0;
-        f1_indicator       = 0;
-        f2_indicator       = 0;
-        S_indicator        = 0;
-        f1[f1_indicator++] = sourceNewID;
-        int level = 0;
-
-        // printf("===========Source(new): %d type: %d===========\n",sourceNewID,sourceType);
-        //forward traverse
-        while (f1_indicator>0){ 
-            // printf("level: %d\n queue: ",level);
-            // Allocate new memory for next_queue in each iteration
-            int* currentQueue;
-            int* nextQueue;
-            if(level% 2 == 0){
-                currentQueue = f1;
-                nextQueue = f2;
-            }
-            else{
-                currentQueue = f2;
-                nextQueue = f1;
-            }
-            
-            for(int v=0; v<f1_indicator; v++) {
-                int curNewID = currentQueue[v];
-                S[S_indicator++] = curNewID;  // Put node u into its level
-                // printf("%d ",curNewID);
-                // Traverse the adjacent nodes in CSR format
-                for(int new_nidx = _csr->orderedCsrV[curNewID] ; new_nidx < _csr->orderedCsrV[curNewID + 1] ; new_nidx ++) {
-                    int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
-                    // If w has not been visited, update distance and add to next_queue
-                    if (Source_dist[new_nid] < 0) {
-                        Source_dist[new_nid] = Source_dist[curNewID] + 1;
-                        nextQueue[f2_indicator++] = new_nid;
-                    }
-                    // When a shortest path is found
-                    if (Source_dist[new_nid] == Source_dist[curNewID] + 1) {
-                        Source_sigma[new_nid] += Source_sigma[curNewID];
-                    }
-                }
-            }
-            // printf("\n");
-            // Free current_queue and set it to next_queue for the next iteration
-            f1_indicator = f2_indicator;
-            f2_indicator = 0;
-            level++;
-        }
-
+        //排序為了找到backward的順序
+        cudaMemcpy(&max_depth,g_max_depth,sizeof(int),cudaMemcpyDeviceToHost);
+        thrust::device_ptr<int> d_count_table = thrust::device_pointer_cast(g_count_table);
+        thrust::exclusive_scan(d_count_table, d_count_table + max_depth+2, d_count_table);
+        cudaMemset(stackOffset,-1,sizeof(int)*V);
+        cudaMemcpy(&stackOffset[0],g_count_table,sizeof(int)*(max_depth+2),cudaMemcpyDeviceToHost);
 
         //backward
-        for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
-            int w = S[d];
-            // oldID = _csr->mapNodeID_New_to_Old[w];
-
-            // for(int v: predecessors[w]){
-            //     delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
-            // }
-            for(int new_nidx = _csr->orderedCsrV[w] ; new_nidx < _csr->orderedCsrV[w + 1] ; new_nidx ++) {
-                int v = _csr->orderedCsrE[new_nidx];
-                if (Source_dist[v] == Source_dist[w] - 1) {
-                    delta[v] += (Source_sigma[v] / (float)Source_sigma[w]) * (1.0 + delta[w]);
-                }
+        int stack_Offset=0;
+        for (int d = max_depth; d >= 0; --d) {
+            
+            int degree =(stackOffset[d+1] - stackOffset[d]);
+            int blocknum = (degree < INT_MAX) ? degree : INT_MAX;
+            // std::cout << "backward level(" << d << ")(deg: "<<degree<<"):\t"<<range_begin+stackOffset[d+1] <<"~"<<range_begin+stackOffset[d] <<" " << stackOffset[d+1] - stackOffset[d] << std::endl;
+            for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++){
+                deltaCalculation_s_normal<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_delta,g_sigma,g_dist,INT_MAX,i,(range_begin+stackOffset[d]),degree,0,V,sourceNewID,g_BC,g_newNodesID_arr,max_depth);
             }
-            //BC_temp紀錄值到新的ID的位置 delta[w] * newID_infos[sourceNewID].w
-            BC_temp[w] += delta[w] * newID_infos[sourceNewID].w ; // + (newID_infos[sourceNewID].w * (delta[w]-(newID_infos[w].w-1)))
+            CHECK(cudaDeviceSynchronize());
+            
         }
-
-    }
-    
-    #pragma endregion 
-    
-
-    
-    #pragma region combine value //合併oldID(切AP前 D1後)的BC至原始的ID
-
-    for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-        int oldID = _csr->mapNodeID_New_to_Ori[sourceNewID];
-        // int sourceType = _csr->nodesType[oldID];
-        // printf("oldID = %d  sourceNewID: %d\n", oldID,sourceNewID);
-        _BCs[oldID] += BC_temp[sourceNewID];
         
+        // printf("[ANS]============g_delta============max: %d\n",max_depth);
+        // printArray_float_n<<<ceil(V/64.0),min(V,64)>>>(g_delta,V,0);
+        // CHECK(cudaDeviceSynchronize());
+        #pragma endregion
+    
+        // cudaMemset(g_BC_temp,0,V*sizeof(float));
+        // break;
+    }
+
+    #pragma endregion
+
+
+    #pragma region other_node
+    for (int sourceNewID = csr.startNodeID; sourceNewID <= csr.endNodeID; ++sourceNewID) {
+        int newSourceNodesDegree   = csr.csrNodesDegree[sourceNewID];
+        if(Vertex_computed[sourceNewID]) continue;//(newNodesDegree_arr[sourceNewID] > avg_degree)
+        Vertex_computed[sourceNewID]=true;
+        // printf("===========Do other SourceID: %d=================\n",sourceNewID);
+        resetBC_value__n<<<ceil((double)V/64.0),min(V,64)>>>(g_dist_n,g_f1,g_sigma_n,g_delta,g_stack,g_level,sourceNewID,0,V);
+        CHECK(cudaDeviceSynchronize());
+        cudaMemset(g_nextQueueSize,0,sizeof(int));
+        currentQueueSize = 1;
+        int level =0;
+
+        while (currentQueueSize>0) { //!qIsEmpty(current_queue)
+            // printf(" forward level: %d currentQueueSize: %d\n",level,currentQueueSize);
+            // printf("currentQueueSize: %d\n",currentQueueSize);
+            // Allocate new memory for next_queue in each iteration
+            int *g_currentQueue;
+            int *g_nextQueue;
+            if(level% 2 == 0){
+                g_currentQueue = g_f1;
+                g_nextQueue = g_f2;
+            }
+            else{
+                g_currentQueue = g_f2;
+                g_nextQueue = g_f1;
+            }
+        
+            stackOffset[level+1] = currentQueueSize + stackOffset[level];
+            int blocknum = (currentQueueSize < INT_MAX) ? currentQueueSize : INT_MAX;
+            //平行跑BFS
+            for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++){
+                allBC_n<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist_n,g_sigma_n,INT_MAX,i,currentQueueSize,0,V);
+                CHECK(cudaDeviceSynchronize());
+            }
+            cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost);
+            cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(int),cudaMemcpyDeviceToDevice);
+            cudaMemset(g_nextQueueSize,0,sizeof(int));
+            // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_dist_n,V,NOneighbor);
+            // CHECK(cudaDeviceSynchronize());
+            level++;
+        }
+    
+        //backward
+        for (int d = level - 1; d >= 0; --d) {
+            // std::cout << "backward level(" << d << "):\t" << stackOffset[d+1] - stackOffset[d] << std::endl;
+            int degree =(stackOffset[d+1] - stackOffset[d]);
+            int blocknum = (degree < INT_MAX) ? degree : INT_MAX;
+            
+            for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++){
+                deltaCalculation__n<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_delta,g_sigma_n,g_stack,g_dist_n,INT_MAX,i,stackOffset[d],degree,0,V,sourceNewID,g_BC);
+            }
+            CHECK(cudaDeviceSynchronize());
+            // printArray_float<<<ceil(V/64.0),min(V,64)>>>(g_delta,V);
+        }
+        
+    
     }
     
     #pragma endregion
 
-    // _csr->csrNodesDegree[newApCloneID]= _csr->oriCsrV[newApCloneID + 1]-_csr->oriCsrV[newApCloneID];
+
+    cudaMemcpy(_BCs,g_BC ,  V * sizeof(float),cudaMemcpyDeviceToHost);
+    // Free memory for S and its levels
+    free(stackOffset);
+    cudaFree(g_sigma);
+    cudaFree(g_delta);
+    cudaFree(g_stack);
+    cudaFree(g_level);
+    cudaFree(g_dist);
+    cudaFree(g_f1);
+    cudaFree(g_f2);
+    cudaFree(g_nextQueueSize);
+    cudaFree(g_BC);
+
+    
+}
+
+
+//D1+DMF原版
+void DMF2018_D3_par(struct CSR csr,float* _BCs) {
+
+    //消除D1
+    //D1 folding
+    D1Folding(&csr);
+
+    //找出消除D1後的avg_degree
+    int avg_degree = (int)ceil(csr.D1foldingESize/csr.ordinaryNodeCount);
+    printf("avg_degree: %d\n",avg_degree);
+    int V=csr.csrVSize-1;
+    int threadnum = 32;
+    int max_depth=0;
+    int* Vertex_computed = (int*)calloc(sizeof(int*),V);
+
+    #pragma region malloc_cudamalloc
+    //CPU variable
+    int    currentQueueSize;
+    int*   stackOffset = (int*)calloc(V,sizeof(int));
+    //GPU MALLOC　variable
+    int*   g_stack;      
+    int*   g_sigma;     
+    int* g_dist;
+    int*   g_level;     
+    float* g_delta; 
+    int*   g_S_size;
+    int*   g_f1;
+    int*   g_f2;
+    int*   g_nextQueueSize; //用來回傳給CPU判別currentQueueSize，是否繼續traverse
+    int* g_csrV;
+    int* g_OricsrV;
+    int* g_csrE;
+    float* g_BC;
+    int*   g_sigma_n;     
+    int*   g_dist_n;
+    int*   g_newNodesID_min;
+    int*   g_newNodesID_arr;
+    int*   g_max_depth;
+    int*   g_count_table;
+    int*   g_representNode;
+    int*   g_NodeDegree;
+
+    // printf("start malloc\n");
+    cudaMalloc((void **)&g_stack,V * sizeof(int)); //用CPU的stack offset存每一層的位置
+    cudaMalloc((void **)&g_sigma,V * sizeof(int));
+    cudaMalloc((void **)&g_dist,V * sizeof(int));
+    cudaMalloc((void **)&g_level,V * sizeof(int));
+    cudaMalloc((void **)&g_delta,V * sizeof(float));
+    cudaMalloc((void **)&g_S_size,V*sizeof(int));
+    
+    cudaMalloc((void **)&g_f1, V * sizeof(int));
+    cudaMalloc((void **)&g_f2, V * sizeof(int));
+    cudaMalloc((void **)&g_nextQueueSize,sizeof(int));
+    cudaMalloc((void **)&g_csrV, (V+1) * sizeof(int));
+    cudaMalloc((void **)&g_OricsrV, (V+1) * sizeof(int));
+    cudaMalloc((void **)&g_representNode, (V+1) * sizeof(int));
+    cudaMalloc((void **)&g_csrE, csr.csrESize * sizeof(int));
+    cudaMalloc((void **)&g_BC, V * sizeof(float));
+    cudaMalloc((void **)&g_sigma_n, V * avg_degree * sizeof(int)); //2d array紀錄鄰居source的路徑數量
+    cudaMalloc((void **)&g_dist_n,  V * avg_degree * sizeof(int)); //2d array紀錄鄰居source的距離
+    cudaMalloc((void**)&g_count_table, sizeof(int) * V);
+    cudaMalloc((void**)&g_newNodesID_min, sizeof(int) * V);
+    cudaMalloc((void**)&g_newNodesID_arr, sizeof(int) * V);
+    cudaMalloc((void**)&g_max_depth, sizeof(int));
+    CHECK(cudaMemcpy(g_csrV , csr.csrV ,  (V+1) * sizeof(int),cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(g_OricsrV , csr.oriCsrV ,  (V+1) * sizeof(int),cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(g_csrE , csr.csrE ,  csr.csrESize * sizeof(int),cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(g_representNode , csr.representNode ,  (V) * sizeof(int),cudaMemcpyHostToDevice));
+    // CHECK(cudaMemcpy(g_NodeDegree , csr.csrNodesDegree ,  (V) * sizeof(int),cudaMemcpyHostToDevice))
+    CHECK(cudaMemset(g_BC, 0.0f, V * sizeof(float)));
+    #pragma endregion malloc_cudamalloc
+    // printf("avg_degree: %d\n",avg_degree);
+    
+     //用degree做排序 大->小
+     quicksort_nodeID_with_degree(csr.notD1Node, csr.csrNodesDegree, 0, csr.ordinaryNodeCount - 1);
+
+
+    #pragma region DMF
+    for(int notD1NodeIndex = csr.ordinaryNodeCount - 1 ; notD1NodeIndex >= 0 ; notD1NodeIndex --){
+        int sourceNewID = csr.notD1Node[notD1NodeIndex];
+        int newSourceNodesDegree=csr.csrNodesDegree[sourceNewID];
+        
+        if( newSourceNodesDegree> 2 ){ //(newNodesDegree_arr[sourceNewID] > avg_degree)
+            break;
+        }
+        // printf("[COMP %d]newID: %d, oldID:%d degree %d \n",compID, sourceNewID, sourceOldID, newSourceNodesDegree);
+        /*
+         * 不做：
+         * 1. 已經 nodeDone = 1 的 node
+         * 2. CloneAP (藉由 (sourceOldID > oriEndNodeID)判斷一個node是不是 CloneAP) 
+         * 3. sourceNewID的鄰居都沒有做過
+        */
+        bool N_flag    =false; //當node的鄰居是否有做過
+        for(int new_nidx = csr.csrV[sourceNewID] ; new_nidx < csr.oriCsrV[sourceNewID + 1] ; new_nidx ++){
+            int new_nid = csr.csrE[new_nidx]; //new_nid為curNewID的鄰居
+            // printf("%d,",new_nid);
+            if(Vertex_computed[new_nid] == true){
+               N_flag=true;
+            }
+        }
+        // printf("newNodesDegree_arr[%d]: %d\n",sourceNewID,newNodesDegree_arr[sourceNewID]);
+        // printf("}\n");
+        if(Vertex_computed[sourceNewID] || (newSourceNodesDegree != 2) || N_flag){ //(newNodesDegree_arr[sourceNewID] > avg_degree)
+            continue;
+        }
+
+        // printf("===========Do SourceID: %d=================\n",sourceNewID);
+
+        //計算SourceID鄰居的dist以及sigma (forward)
+        for(int NeighborSource_index = csr.csrV[sourceNewID]; NeighborSource_index < csr.oriCsrV[sourceNewID + 1] ; ++NeighborSource_index) {
+            int NeighborSourceID = csr.csrE[NeighborSource_index];
+            Vertex_computed[NeighborSourceID]=true;
+            // printf("NeighborSourceID: %d\n",NeighborSourceID);
+            //forward
+            int NOneighbor = ( NeighborSource_index - csr.csrV[sourceNewID] ); //從0開始記錄鄰居的dist和sigma
+
+            resetBC_value_n_D1<<<ceil((double)V/64.0),min(V,64)>>>(g_dist_n,g_f1,g_sigma_n,g_delta,g_stack,g_level,NeighborSourceID,NOneighbor,V,g_representNode);
+            CHECK(cudaDeviceSynchronize());
+            cudaMemset(g_nextQueueSize,0,sizeof(int));
+            currentQueueSize = 1;
+            int level =0;
+            // BFS forward phase: frontier-based BFS with extra mallocs
+            while (currentQueueSize>0) { //!qIsEmpty(current_queue)
+                // printf(" forward level: %d currentQueueSize: %d\n",level,currentQueueSize);
+                // printf("currentQueueSize: %d\n",currentQueueSize);
+                // Allocate new memory for next_queue in each iteration
+                int *g_currentQueue;
+                int *g_nextQueue;
+                if(level% 2 == 0){
+                    g_currentQueue = g_f1;
+                    g_nextQueue = g_f2;
+                }
+                else{
+                    g_currentQueue = g_f2;
+                    g_nextQueue = g_f1;
+                }
+            
+                stackOffset[level+1] = currentQueueSize + stackOffset[level];
+                int blocknum = (currentQueueSize < INT_MAX) ? currentQueueSize : INT_MAX;
+                //平行跑BFS
+                for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++){
+                    allBC_n_D1<<<blocknum,threadnum>>>(g_csrV,g_OricsrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist_n,g_sigma_n,INT_MAX,i,currentQueueSize,NOneighbor,V);
+                    CHECK(cudaDeviceSynchronize());
+                }
+                cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost);
+                cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(int),cudaMemcpyDeviceToDevice);
+                cudaMemset(g_nextQueueSize,0,sizeof(int));
+                // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_dist_n,V,NOneighbor);
+                // CHECK(cudaDeviceSynchronize());
+                level++;
+            }
+            //backward
+            for (int d = level - 1; d >= 0; --d) {
+                // std::cout << "backward level(" << d << "):\t" << stackOffset[d+1] - stackOffset[d] << std::endl;
+                int degree =(stackOffset[d+1] - stackOffset[d]);
+                int blocknum = (degree < INT_MAX) ? degree : INT_MAX;
+                
+                for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++){
+                    deltaCalculation__n_D1<<<blocknum,threadnum>>>(g_csrV,g_OricsrV,g_csrE,g_delta,g_sigma_n,g_stack,g_dist_n,INT_MAX,i,stackOffset[d],degree,NOneighbor,V,NeighborSourceID,g_BC,g_representNode);
+                }
+                CHECK(cudaDeviceSynchronize());
+                // printArray_float<<<ceil(V/64.0),min(V,64)>>>(g_delta,V);
+            }
+            
+            // printf("[N SourceID: %d delta]\n",NeighborSourceID);
+            // printArray_float_n<<<ceil(V/64.0),min(V,64)>>>(g_delta,V,0);
+            // CHECK(cudaDeviceSynchronize());
+            // break;
+        }
+
+        #pragma region DMF_source
+        // // //初始delta
+        resetBC_delta_D1<<<ceil(V/64.0),min(V,64)>>>(g_delta,V,g_representNode);
+        // cudaMemset(g_delta,0.0f,V*sizeof(float));
+        CHECK(cudaDeviceSynchronize());
+        Vertex_computed[sourceNewID]=true;
+        //找min distance
+
+        cudaMemset(g_max_depth,0,sizeof(int));
+        cudaMemset(g_count_table,0,sizeof(int)*V);
+
+        //先找出每個source鄰居走到v_ID的最短距離
+        // printf("source degree: %d\n",newSourceNodesDegree);
+        find_S2neighbor_min_D1<<<ceil(V/64.0),min(V,64)>>>(sourceNewID,g_newNodesID_min,newSourceNodesDegree,g_dist_n,g_dist,V,g_max_depth);
+        CHECK(cudaDeviceSynchronize());
+        
+        // ----------------------做到這裡
+        // cudaMemcpy(&max_depth,g_max_depth,sizeof(int),cudaMemcpyDeviceToHost);
+        // printf("============g_newNodesID_min============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_min,V,0);
+        // CHECK(cudaDeviceSynchronize());
+        //先找出每個source鄰居走到v_ID的sigma
+        find_S2neighbor_sigma_normal<<<ceil(V/64.0),min(V,64)>>>(sourceNewID,newSourceNodesDegree,g_dist_n,g_sigma_n,g_dist,g_sigma,V);
+        CHECK(cudaDeviceSynchronize());
+
+        // printf("============g_sigma============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_sigma,V,0);
+        // CHECK(cudaDeviceSynchronize());
+
+        //計數dist的數量
+        S_dist_count_normal<<<ceil(V/64.0),min(V,64)>>>(g_count_table,g_newNodesID_min,V);
+        g_newNodesID_arr_reset<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_arr,csr.startNodeID,csr.endNodeID);
+        CHECK(cudaDeviceSynchronize());
+
+        // printf("============g_count_table============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_count_table,V,0);
+        // CHECK(cudaDeviceSynchronize());
+        // printf("[before]============g_newNodesID_arr============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_arr,V,0);
+        // CHECK(cudaDeviceSynchronize());
+
+        //sort node從距離遠到近
+        int range_begin = csr.startNodeID;
+        int range_end   = csr.endNodeID+1;
+        // printf("%d-%d\n",range_begin,range_end);
+        // cudaMemcpy(&range_begin, &csr.startNodeID, sizeof(int), cudaMemcpyDeviceToHost);
+        // cudaMemcpy(&range_end, &(csr.endNodeID)+1, sizeof(int), cudaMemcpyDeviceToHost);
+        thrust::device_ptr<int> d_keys   = thrust::device_pointer_cast(g_newNodesID_min);
+        thrust::device_ptr<int> d_values = thrust::device_pointer_cast(g_newNodesID_arr);
+        thrust::sort_by_key(
+            d_keys   + range_begin,
+            d_keys   + range_end,
+            d_values + range_begin
+        );
+
+        // printf("[after]============g_newNodesID_arr============max: %d\n",max_depth);
+        // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_arr,V,0);
+        // CHECK(cudaDeviceSynchronize());
+
+        //排序為了找到backward的順序
+        cudaMemcpy(&max_depth,g_max_depth,sizeof(int),cudaMemcpyDeviceToHost);
+        thrust::device_ptr<int> d_count_table = thrust::device_pointer_cast(g_count_table);
+        thrust::exclusive_scan(d_count_table, d_count_table + max_depth+2, d_count_table);
+        cudaMemset(stackOffset,-1,sizeof(int)*V);
+        cudaMemcpy(&stackOffset[0],g_count_table,sizeof(int)*(max_depth+2),cudaMemcpyDeviceToHost);
+
+        //backward
+        int stack_Offset=0;
+        for (int d = max_depth; d >= 0; --d) {
+            
+            int degree =(stackOffset[d+1] - stackOffset[d]);
+            int blocknum = (degree < INT_MAX) ? degree : INT_MAX;
+            // std::cout << "backward level(" << d << ")(deg: "<<degree<<"):\t"<<range_begin+stackOffset[d+1] <<"~"<<range_begin+stackOffset[d] <<" " << stackOffset[d+1] - stackOffset[d] << std::endl;
+            for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++){
+                deltaCalculation_s_D1<<<blocknum,threadnum>>>(g_csrV,g_OricsrV,g_csrE,g_delta,g_sigma,g_dist,INT_MAX,i,(range_begin+stackOffset[d]),degree,0,V,sourceNewID,g_BC,g_newNodesID_arr,max_depth,g_representNode);
+            }
+            CHECK(cudaDeviceSynchronize());
+            
+        }
+        
+        // printf("[ANS]============g_delta============max: %d\n",max_depth);
+        // printArray_float_n<<<ceil(V/64.0),min(V,64)>>>(g_delta,V,0);
+        // CHECK(cudaDeviceSynchronize());
+        #pragma endregion
+    
+        // cudaMemset(g_BC_temp,0,V*sizeof(float));
+        // break;
+    }
+
+    #pragma endregion
+
+
+    #pragma region other_node
+    // for (int sourceNewID = csr.startNodeID; sourceNewID <= csr.endNodeID; ++sourceNewID) {
+    //     int newSourceNodesDegree   = csr.csrNodesDegree[sourceNewID];
+    for(int notD1NodeIndex = csr.ordinaryNodeCount - 1 ; notD1NodeIndex >= 0 ; notD1NodeIndex --){
+        int sourceNewID = csr.notD1Node[notD1NodeIndex];
+        int newSourceNodesDegree=csr.csrNodesDegree[sourceNewID];
+
+        if(Vertex_computed[sourceNewID]) continue;//(newNodesDegree_arr[sourceNewID] > avg_degree)
+        Vertex_computed[sourceNewID]=true;
+        // printf("===========Do other SourceID: %d=================\n",sourceNewID);
+        resetBC_value_n_D1<<<ceil(V/64.0),min(V,64)>>>(g_dist_n,g_f1,g_sigma_n,g_delta,g_stack,g_level,sourceNewID,0,V,g_representNode);
+        CHECK(cudaDeviceSynchronize());
+        cudaMemset(g_nextQueueSize,0,sizeof(int));
+        currentQueueSize = 1;
+        int level =0;
+
+        while (currentQueueSize>0) { //!qIsEmpty(current_queue)
+            // printf(" forward level: %d currentQueueSize: %d\n",level,currentQueueSize);
+            // printf("currentQueueSize: %d\n",currentQueueSize);
+            // Allocate new memory for next_queue in each iteration
+            int *g_currentQueue;
+            int *g_nextQueue;
+            if(level% 2 == 0){
+                g_currentQueue = g_f1;
+                g_nextQueue = g_f2;
+            }
+            else{
+                g_currentQueue = g_f2;
+                g_nextQueue = g_f1;
+            }
+        
+            stackOffset[level+1] = currentQueueSize + stackOffset[level];
+            int blocknum = (currentQueueSize < INT_MAX) ? currentQueueSize : INT_MAX;
+            //平行跑BFS
+            for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++){
+                allBC_n_D1<<<blocknum,threadnum>>>(g_csrV,g_OricsrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist_n,g_sigma_n,INT_MAX,i,currentQueueSize,0,V);
+                // allBC_n<<<blocknum,threadnum>>>(g_csrV,g_csrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist_n,g_sigma_n,INT_MAX,i,currentQueueSize,0,V);
+                CHECK(cudaDeviceSynchronize());
+            }
+            cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost);
+            cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(int),cudaMemcpyDeviceToDevice);
+            cudaMemset(g_nextQueueSize,0,sizeof(int));
+            // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_dist_n,V,NOneighbor);
+            // CHECK(cudaDeviceSynchronize());
+            level++;
+        }
+    
+        //backward
+        for (int d = level - 1; d >= 0; --d) {
+            // std::cout << "backward level(" << d << "):\t" << stackOffset[d+1] - stackOffset[d] << std::endl;
+            int degree =(stackOffset[d+1] - stackOffset[d]);
+            int blocknum = (degree < INT_MAX) ? degree : INT_MAX;
+            
+            for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++){
+                deltaCalculation__n_D1<<<blocknum,threadnum>>>(g_csrV,g_OricsrV,g_csrE,g_delta,g_sigma_n,g_stack,g_dist_n,INT_MAX,i,stackOffset[d],degree,0,V,sourceNewID,g_BC,g_representNode);
+            }
+            CHECK(cudaDeviceSynchronize());
+            // printArray_float<<<ceil(V/64.0),min(V,64)>>>(g_delta,V);
+        }
+        
+    
+    }
+    
+    #pragma endregion
+
+    cudaMemcpy(_BCs,g_BC ,  V * sizeof(float),cudaMemcpyDeviceToHost);
+
 
     #pragma region d1Node_Dist_And_CC_Recovery
-    int V = _csr->csrVSize;
+    
     int d1NodeID        = -1;
     int d1NodeParentID  = -1;
-    for(int d1NodeIndex = _csr->degreeOneNodesQ->rear ; d1NodeIndex >= 0 ; d1NodeIndex --){
-        d1NodeID        = _csr->degreeOneNodesQ->dataArr[d1NodeIndex];
-        d1NodeParentID  = _csr->D1Parent[d1NodeID];
-        int total_number= (V-1-_csr->startNodeID);
+    for(int d1NodeIndex = csr.degreeOneNodesQ->rear ; d1NodeIndex >= 0 ; d1NodeIndex --){
+        d1NodeID        = csr.degreeOneNodesQ->dataArr[d1NodeIndex];
+        d1NodeParentID  = csr.D1Parent[d1NodeID];
+        int total_number= (csr.csrVSize -1-csr.startNodeID);
         // printf("d1NodeID = %2d  ParentID = %2d  val(%.2f * %.2f): %.2f\n", d1NodeID, d1NodeParentID ,(float)(V-_csr->representNode[d1NodeID]-2 - _csr->startNodeID),(float)(_csr->representNode[d1NodeID]), (float)(V-_csr->representNode[d1NodeID]-2- _csr->startNodeID) * (_csr->representNode[d1NodeID]));
         // printf("d1NodeID = %2d  ParentID = %2d  val(%.2f * %.2f): %.2f\n", d1NodeID, d1NodeParentID ,(float)(_csr->representNode[d1NodeID]-1),(float)(V-1-_csr->representNode[d1NodeID]), (float)(_csr->representNode[d1NodeID]-1) * (V-1-_csr->representNode[d1NodeID]));
-        _BCs[d1NodeID]  = (_csr->representNode[d1NodeID]-1) * (total_number -_csr->representNode[d1NodeID]);
-        _BCs[d1NodeParentID]  += (float)(total_number - _csr->representNode[d1NodeID] - 1) * (_csr->representNode[d1NodeID]);
+        _BCs[d1NodeID]  = (csr.representNode[d1NodeID]-1) * (total_number - csr.representNode[d1NodeID]);
+        _BCs[d1NodeParentID]  += (float)(total_number - csr.representNode[d1NodeID] - 1) * (csr.representNode[d1NodeID]);
         // printf("d1NodeID = %2d, _CCs[%2d] = %2d, ParentID = %2d, _CCs[%2d] = %2d\n", d1NodeID, d1NodeID, _CCs[d1NodeID], d1NodeParentID, d1NodeParentID, _CCs[d1NodeParentID]);
     }
 
     
     #pragma endregion //d1Node_Dist_And_CC_Recovery
 
+    // Free memory for S and its levels
+    free(stackOffset);
+    cudaFree(g_sigma);
+    cudaFree(g_delta);
+    cudaFree(g_stack);
+    cudaFree(g_level);
+    cudaFree(g_dist);
+    cudaFree(g_f1);
+    cudaFree(g_f2);
+    cudaFree(g_nextQueueSize);
+    cudaFree(g_BC);
+
     
 }
 
-//DMF原版
 
-//D1+DMF原版
 
 //D1+AP+我的
-
-
 void EXDMF_D1_DP_par( CSR* csr, float *BC) {
     
     #pragma region Preprocess
@@ -7808,19 +8423,23 @@ void EXDMF_D1_DP_par( CSR* csr, float *BC) {
             cudaMemcpy(&stackOffset[0],g_count_table,sizeof(int)*(max_depth+2),cudaMemcpyDeviceToHost);
             // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_arr,V,0);
             // CHECK(cudaDeviceSynchronize());
+            // printf("============g_newNodesID_arr============\n");
+            // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_newNodesID_arr,V,0);
+            // CHECK(cudaDeviceSynchronize());
             // printf("============count table============\n");
             // printArray_int_n<<<ceil(V/64.0),min(V,64)>>>(g_count_table,V,0);
             // CHECK(cudaDeviceSynchronize());
             
             
             //backward
+            // int stack_Offset=0;
             for (int d = max_depth; d >= 0; --d) {
                 
                 int degree =(stackOffset[d+1] - stackOffset[d]);
                 int blocknum = (degree < INT_MAX) ? degree : INT_MAX;
                 // std::cout << "backward level(" << d << ")(deg: "<<degree<<"):\t"<<range_begin+stackOffset[d+1] <<"~"<<range_begin+stackOffset[d] <<" " << stackOffset[d+1] - stackOffset[d] << std::endl;
                 for(int i=0;i<(int)ceil(degree/(float)INT_MAX);i++){
-                    deltaCalculation_s<<<blocknum,threadnum>>>(g_orderedCsrV,g_orderedCsrE,g_delta,g_sigma,g_count_table,g_dist,INT_MAX,i,(range_begin+stackOffset[d]),degree,0,V,sourceNewID,g_BC_temp,g_newID_infos,g_newNodesID_arr,max_depth);
+                    deltaCalculation_s<<<blocknum,threadnum>>>(g_orderedCsrV,g_orderedCsrE,g_delta,g_sigma,g_dist,INT_MAX,i,(range_begin+stackOffset[d]),degree,0,V,sourceNewID,g_BC_temp,g_newID_infos,g_newNodesID_arr,max_depth);
                 }
                 CHECK(cudaDeviceSynchronize());
                 // printArray_float<<<ceil(V/64.0),min(V,64)>>>(g_delta,V);
