@@ -188,7 +188,7 @@ int main(int argc, char* argv[]){
     // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
     // computeBC_D1folding(csr,ans_para);
     // compute_D1_AP_BC(csr,ans_para);
-    brandes_SS_par(*csr,csr->csrVSize,ans_para);
+    // brandes_SS_par(*csr,csr->csrVSize,ans_para);
     // brandes_MS_par(*csr , max_multi , ans_para);
     // // brandes_MS_par(*csr , max_multi , ans_para);
 
@@ -238,7 +238,7 @@ int main(int argc, char* argv[]){
         ans_para_vec[i]=ans_para[i];
         ans_para_vec2[i]=ans_para2[i];
     }
-    check_ans(ans_para_vec,ans_para_vec2,*csr);
+    // check_ans(ans_para_vec,ans_para_vec2,*csr);
     // check_ans(ans,ans_para_vec,*csr);
     // check_ans_int(ans_CC,my_CC,*csr);
 
@@ -7819,8 +7819,8 @@ void DMF2018_D3_par(struct CSR csr,float* _BCs) {
 
     //找出消除D1後的avg_degree
     int avg_degree = (int)ceil(csr.D1foldingESize/csr.ordinaryNodeCount);
-    printf("avg_degree: %d\n",avg_degree);
-    int V=csr.csrVSize-1;
+    // printf("csr.D1foldingESize: %d ordinaryNodeCount: %d avg_degree: %d\n",csr.D1foldingESize,csr.ordinaryNodeCount,avg_degree);
+    int V=csr.csrVSize;
     int threadnum = 32;
     int max_depth=0;
     int* Vertex_computed = (int*)calloc(sizeof(int*),V);
@@ -7850,7 +7850,7 @@ void DMF2018_D3_par(struct CSR csr,float* _BCs) {
     int*   g_max_depth;
     int*   g_count_table;
     int*   g_representNode;
-    int*   g_NodeDegree;
+    // int*   g_NodeDegree;
 
     // printf("start malloc\n");
     cudaMalloc((void **)&g_stack,V * sizeof(int)); //用CPU的stack offset存每一層的位置
@@ -7863,9 +7863,9 @@ void DMF2018_D3_par(struct CSR csr,float* _BCs) {
     cudaMalloc((void **)&g_f1, V * sizeof(int));
     cudaMalloc((void **)&g_f2, V * sizeof(int));
     cudaMalloc((void **)&g_nextQueueSize,sizeof(int));
-    cudaMalloc((void **)&g_csrV, (V+1) * sizeof(int));
-    cudaMalloc((void **)&g_OricsrV, (V+1) * sizeof(int));
-    cudaMalloc((void **)&g_representNode, (V+1) * sizeof(int));
+    cudaMalloc((void **)&g_csrV, (V+2) * sizeof(int));
+    cudaMalloc((void **)&g_OricsrV, (V+2) * sizeof(int));
+    cudaMalloc((void **)&g_representNode, (V)*2 * sizeof(int));
     cudaMalloc((void **)&g_csrE, csr.csrESize * sizeof(int));
     cudaMalloc((void **)&g_BC, V * sizeof(float));
     cudaMalloc((void **)&g_sigma_n, V * avg_degree * sizeof(int)); //2d array紀錄鄰居source的路徑數量
@@ -7874,10 +7874,10 @@ void DMF2018_D3_par(struct CSR csr,float* _BCs) {
     cudaMalloc((void**)&g_newNodesID_min, sizeof(int) * V);
     cudaMalloc((void**)&g_newNodesID_arr, sizeof(int) * V);
     cudaMalloc((void**)&g_max_depth, sizeof(int));
-    CHECK(cudaMemcpy(g_csrV , csr.csrV ,  (V+1) * sizeof(int),cudaMemcpyHostToDevice));
-    CHECK(cudaMemcpy(g_OricsrV , csr.oriCsrV ,  (V+1) * sizeof(int),cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(g_csrV , csr.csrV ,  (V+2) * sizeof(int),cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(g_OricsrV , csr.oriCsrV ,  (V+2) * sizeof(int),cudaMemcpyHostToDevice));
     CHECK(cudaMemcpy(g_csrE , csr.csrE ,  csr.csrESize * sizeof(int),cudaMemcpyHostToDevice));
-    CHECK(cudaMemcpy(g_representNode , csr.representNode ,  (V) * sizeof(int),cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(g_representNode , csr.representNode ,  (V)* 2 * sizeof(int),cudaMemcpyHostToDevice));
     // CHECK(cudaMemcpy(g_NodeDegree , csr.csrNodesDegree ,  (V) * sizeof(int),cudaMemcpyHostToDevice))
     CHECK(cudaMemset(g_BC, 0.0f, V * sizeof(float)));
     #pragma endregion malloc_cudamalloc
@@ -7885,7 +7885,7 @@ void DMF2018_D3_par(struct CSR csr,float* _BCs) {
     
      //用degree做排序 大->小
      quicksort_nodeID_with_degree(csr.notD1Node, csr.csrNodesDegree, 0, csr.ordinaryNodeCount - 1);
-
+    bool do_flage=false;
 
     #pragma region DMF
     for(int notD1NodeIndex = csr.ordinaryNodeCount - 1 ; notD1NodeIndex >= 0 ; notD1NodeIndex --){
@@ -7912,7 +7912,7 @@ void DMF2018_D3_par(struct CSR csr,float* _BCs) {
         }
         // printf("newNodesDegree_arr[%d]: %d\n",sourceNewID,newNodesDegree_arr[sourceNewID]);
         // printf("}\n");
-        if(Vertex_computed[sourceNewID] || (newSourceNodesDegree != 2) || N_flag){ //(newNodesDegree_arr[sourceNewID] > avg_degree)
+        if(Vertex_computed[sourceNewID] || (newSourceNodesDegree != 2) || N_flag ){ //(newNodesDegree_arr[sourceNewID] > avg_degree)
             continue;
         }
 
@@ -7961,6 +7961,7 @@ void DMF2018_D3_par(struct CSR csr,float* _BCs) {
                 // CHECK(cudaDeviceSynchronize());
                 level++;
             }
+            
             //backward
             for (int d = level - 1; d >= 0; --d) {
                 // std::cout << "backward level(" << d << "):\t" << stackOffset[d+1] - stackOffset[d] << std::endl;
