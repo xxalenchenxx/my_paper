@@ -1,69 +1,32 @@
-###################   C #######################
-# # 编译器和编译选项
-# CC = gcc
-# CFLAGS = -O2
-
-# # 目标文件和可执行文件名
-# TARGET = a
-
-# # 指定库所在的目录
-# LIB_DIRS := ../Lib/
-# LIB_List := vVector qQueue tTime FileReader AdjList CSR D1Process AP_Process
-# LIB_True_Path := $(addprefix $(LIB_DIRS), $(LIB_List))
-
-# LIB_OBJS := $(addsuffix .o, $(LIB_List))
-
-# remain_OBJS := AP_Process.o
-
-# all: $(TARGET)
-
-# $(TARGET): $(LIB_OBJS)
-# 	$(CC) $(CFLAGS) CC.c $^ -o $@
-
-# $(LIB_OBJS): %.o: $(LIB_DIRS)%
-# 	$(CC) $(CFLAGS) -c $</$*.c -o $@
-
-# # # 清理生成的目标文件和可执行文件
-# clean:
-# 	rm -f *.o $(TARGET)
-
-# # # 显示每个库对应的目标文件列表
-# # show_objs:
-# #     @echo $(LIB_OBJS)
-
-#################################################
-
-
-
-
-
-
-###################   C++ #######################
-# 编译器和编译选项
+# 編譯器與旗標
 CC = nvcc
-CFLAGS = -O3#-g
+CFLAGS = -O3 -Wno-deprecated-gpu-targets
 
-# 目标文件和可执行文件名
+# 目標檔與路徑
 TARGET = a
-
-# 指定库所在的目录
 LIB_DIRS := ../Lib_cpps/
-LIB_List := vVector qQueue tTime FileReader AdjList CSR D1Process AP_Process
-LIB_True_Path := $(addprefix $(LIB_DIRS), $(LIB_List))
+CPP_LIBS := vVector qQueue tTime FileReader AdjList CSR D1Process
+CU_LIBS := AP_Process
 
-LIB_OBJS := $(addsuffix .o, $(LIB_List))
+# 生成路徑
+CPP_OBJS := $(addsuffix .o, $(CPP_LIBS))
+CU_OBJS := $(addsuffix .o, $(CU_LIBS))
 
-remain_OBJS := AP_Process.o
-
+# 預設目標
 all: $(TARGET)
 
-$(TARGET): $(LIB_OBJS)
+# 最終執行檔
+$(TARGET): $(CPP_OBJS) $(CU_OBJS)
 	$(CC) $(CFLAGS) BC.cu $^ -o $@
 
-$(LIB_OBJS): %.o: $(LIB_DIRS)%
+# 編譯 .cpp 為 .o
+$(CPP_OBJS): %.o: $(LIB_DIRS)% 
 	$(CC) $(CFLAGS) -c $</$*.cpp -o $@
 
-# # 清理生成的目标文件和可执行文件
+# 編譯 .cu 為 .o
+$(CU_OBJS): %.o: $(LIB_DIRS)% 
+	$(CC) $(CFLAGS) -c $</$*.cu -o $@
+
+# 清除中間檔與可執行檔
 clean:
 	rm -f *.o $(TARGET)
-#################################################
