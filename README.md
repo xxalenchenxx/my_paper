@@ -52,7 +52,7 @@ For example, when we know the \{n \in N(s)\} distance and path, we cen compute s
 </p>
 
 <p align="center">
-  <em>Compute distance from source $s$ to all vertices</em>
+  <em>Compute distance from source 4 to all vertices</em>
 </p>
 
 <p align="center">
@@ -60,7 +60,7 @@ For example, when we know the \{n \in N(s)\} distance and path, we cen compute s
 </p>
 
 <p align="center">
-  <em>Compute the number of shortest paths from source $s$</em>
+  <em>Compute the number of shortest paths from source 4</em>
 </p>
 
 More deatail you can search on BC.cu
