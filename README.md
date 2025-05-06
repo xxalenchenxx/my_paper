@@ -7,9 +7,7 @@ Graph centrality measures assign a value to each vertex in a graph based on its 
 Among them, **Betweenness Centrality (BC)** is a fundamental metric. The BC value of a vertex $v$ reflects its importance as an intermediary on the shortest paths between other node pairs. A high $BC(v)$ means that $v$ lies on many shortest paths and thus plays a crucial role in facilitating communication or information flow. Conversely, a low $BC(v)$ indicates a peripheral role with minimal influence over connectivity.
 
 Formally, it define as:     
-$$
-\mathrm{BC}(v) = \sum_{\substack{s, v, t \in V \\ s \ne v \ne t}} \frac{\sigma_{s,t}(v)}{\sigma_{s,t}} \tag{1}
-$$
+\mathrm{BC}(v) = \sum_{s \ne v \ne t} \frac{\sigma_{s,t}(v)}{\sigma_{s,t}}
 
 where:
 
@@ -33,25 +31,19 @@ In previous research, create Degree-1 folding, Articulation points, Side vertex 
 
 For a given unweighted and undirected graph $G = (V, E)$, we first define the distance function $\mathrm{dist}_s(t)$ as:
 
-$$
 \mathrm{dist}_s(t) = 
 \begin{cases}
-    \underset{n \in N(s)}{\min} \{ \mathrm{dist}_n(t) \} + 1, & \text{if } t \ne s \\
-    0, & \text{if } t = s
+\min_{n \in N(s)} \{ \mathrm{dist}_n(t) \} + 1, & \text{if } t \ne s \\
+0, & \text{if } t = s
 \end{cases}
-\tag{2}
-$$
 
 We then compute the number of shortest paths $\sigma_{s,t}$ recursively as:
 
-$$
 \sigma_{s,t} = 
 \begin{cases}
-    \underset{n \in \mathrm{Suc}}{\sum} \sigma_{n,t}, & \text{if } t \ne s \\
-    1, & \text{if } t = s
+\sum_{n \in \mathrm{Suc}} \sigma_{n,t}, & \text{if } t \ne s \\
+1, & \text{if } t = s
 \end{cases}
-\tag{3}
-$$
 
  To use this relation, we first pick a vertex $s$ as the source and traverse all $n \in N(s)$ to obtain the corresponding paths and distances. Then, we can use the relation to get the distance and path from $s$ to other vertices $t$.
 
