@@ -219,7 +219,7 @@ int main(int argc, char* argv[]){
     // computeBC_DMF_2018(*csr,ans_para2);
     // computeBC_D1folding(csr,ans_para);
     // compute_D1_AP_BC(csr,ans_para);
-    compute_D1_AP_BC_compress(csr,ans_para);
+    // compute_D1_AP_BC_compress(csr,ans_para);
     // computeCC_ans(csr,ans_CC);
     // compute_D1_CC(csr,my_CC);
 
@@ -229,8 +229,9 @@ int main(int argc, char* argv[]){
     // DMF2018_par(*csr,ans_para2);
     // DMF2018_D3_par(*csr,ans_para2);
 
-    // D1_AP_adjust(csr,ans_para2);
+    D1_AP_adjust(csr,ans_para2);
 
+    
     multi_time2 = seconds();
     printf("done 2\n");
 
