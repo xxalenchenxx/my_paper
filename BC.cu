@@ -190,7 +190,7 @@ int main(int argc, char* argv[]){
     // computeCC_shareBased_oneTraverse(csr,my_CC);
     // cout<<"max_degree: "<<csr->maxDegree<<endl;
 
-    brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
+    // brandes_ORIGIN_for_Seq(*csr,csr->csrVSize,ans);
     // computeBC_D1folding(csr,ans_para);
     // compute_D1_AP_BC(csr,ans_para);
     // brandes_SS_par(*csr,csr->csrVSize,ans_para);
@@ -228,17 +228,18 @@ int main(int argc, char* argv[]){
     // EXDMF_D1_par(*csr,ans_para);
     // DMF2018_par(*csr,ans_para2);
     // DMF2018_D3_par(*csr,ans_para2);
+    D1_AP_adjust_ori(csr,ans_para);
 
-    D1_AP_adjust(csr,ans_para2);
 
-    
     multi_time2 = seconds();
-    printf("done 2\n");
+    printf("=======================done 2=======================\n");
 
     // computeBC_shareBased(csr,my_BC);
     // Seq_multi_source_brandes( *csr , max_multi , my_BC );
 
     mymethod_time1 = seconds();
+
+    // D1_AP_adjust(csr2,ans_para2);
     // computeBC_DMF_Sequential_D1_AP(csr2,ans_para2);
     // computeBC_shareBased_Successor_SS(csr,ans_para2);
     // computeBC_shareBased_Successor_SS_edge_update(csr,ans_para2);
@@ -254,7 +255,7 @@ int main(int argc, char* argv[]){
         ans_para_vec2[i]=ans_para2[i];
     }
     // check_ans(ans_para_vec,ans_para_vec2,*csr);
-    check_ans(ans,ans_para_vec,*csr);
+    // check_ans(ans,ans_para_vec,*csr);
     // check_ans_int(ans_CC,my_CC,*csr);
 
     //答案檢查CC
@@ -9547,8 +9548,10 @@ void D1_AP_adjust( CSR* csr, float *BC) {
     D1Folding(csr);
     AP_detection(csr);
     // AP_Copy_And_Split(csr);
-    AP_Copy_And_Split_compress(csr);
+    AP_Copy_And_Split_opt(csr);
+    printf("AP_Copy_And_Split_opt done\n");
     struct newID_info* newID_infos = rebuildGraph(csr); //rebuild graph for better memory access speed
+    printf("rebulid done\n");
     const int oriEndNodeID = csr->endNodeID - csr->apCloneCount; //原本graph的endNodeID
     int V = csr->newEndID+1;
     int OriV = csr->csrVSize+1;
@@ -9563,7 +9566,6 @@ void D1_AP_adjust( CSR* csr, float *BC) {
     #pragma endregion Preprocess
     // printf("avg_degree: %d\n",avg_degree);
    
-
     for(int compID = 0 ; compID <= csr->compEndID ; compID ++){
         int comp_Size =  csr->comp_newCsrOffset[compID + 1]-csr->comp_newCsrOffset[compID];
         printf("==========compID: %d==========\n",compID);
@@ -9577,6 +9579,20 @@ void D1_AP_adjust( CSR* csr, float *BC) {
             printf("\n");
         }
     }
+
+    // for(int compID = 0 ; compID <= csr->compEndID ; compID ++){
+    //     int comp_Size =  csr->comp_newCsrOffset[compID + 1]-csr->comp_newCsrOffset[compID];
+    //     printf("==========compID: %d==========\n",compID);
+    //     for(int newID_idx = csr->comp_newCsrOffset[compID + 1] - 1 ; newID_idx >= csr->comp_newCsrOffset[compID] ; newID_idx --){
+    //         int sourceNewID = newNodesID_arr[newID_idx];
+    //         printf("%d(%d): ",sourceNewID,newID_infos[sourceNewID].w);
+    //         for(int new_nidx = csr->orderedCsrV[sourceNewID] ; new_nidx < csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++){
+    //             int new_nid = csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
+    //             printf("%d(%d) ",new_nid,newID_infos[new_nid].w);
+    //         }
+    //         printf("\n");
+    //     }
+    // }
 
 }
 
