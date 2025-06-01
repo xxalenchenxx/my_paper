@@ -102,8 +102,8 @@ void compute_graph_degree( struct CSR& csr);
 void brandes_ORIGIN_for_Seq( CSR& csr, int V, vector<float> &BC);
 void brandes_with_predecessors(CSR& csr, int V, float* BC);
 void computeBC_D1folding(struct CSR* _csr, float* _BCs); //D1+brandes
-void compute_D1_AP_BC(struct CSR* _csr, float* _BCs); //BADIOS
-void compute_D1_AP_BC_compress(struct CSR* _csr, float* _BCs);
+void compute_D1_AP_BC(struct CSR* _csr, float* _BCs);
+
 void brandes_with_predecessors_dynamic_check_ans(CSR csr, int V,int sourceID_test, vector<float> BC_ckeck);
 //CC範例
 void computeCC_ans(struct CSR* _csr, int* _CCs);
@@ -140,6 +140,11 @@ void DMF2018_D3_par(struct CSR csr,float* _BCs);
 void EXDMF_par(struct CSR csr,float* _BCs);
 void EXDMF_D1_par(struct CSR csr,float* _BCs);
 void EXDMF_D1_DP_par( CSR* csr, float *BC);
+
+//調整區--改平行方式
+void D1_AP_par_node( CSR* csr, float *BC);
+
+//調整區--改圖的方式
 void D1_AP_adjust( CSR* csr, float *BC);
 void D1_AP_adjust_ori( CSR* csr, float *BC);
 
@@ -218,7 +223,10 @@ int main(int argc, char* argv[]){
     // computeBC_DMF_D3_2018(csr,ans_para);
     // computeBC_DMF_2018(*csr,ans_para2);
     // computeBC_D1folding(csr,ans_para);
+
     // compute_D1_AP_BC(csr,ans_para);
+    D1_AP_par_node(csr,ans_para);
+
     // compute_D1_AP_BC_compress(csr,ans_para);
     // computeCC_ans(csr,ans_CC);
     // compute_D1_CC(csr,my_CC);
@@ -228,11 +236,11 @@ int main(int argc, char* argv[]){
     // EXDMF_D1_par(*csr,ans_para);
     // DMF2018_par(*csr,ans_para2);
     // DMF2018_D3_par(*csr,ans_para2);
-    D1_AP_adjust_ori(csr,ans_para);
+    // D1_AP_adjust_ori(csr,ans_para);
 
 
     multi_time2 = seconds();
-    printf("=======================done 2=======================\n");
+    // printf("=======================done 2=======================\n");
 
     // computeBC_shareBased(csr,my_BC);
     // Seq_multi_source_brandes( *csr , max_multi , my_BC );
@@ -901,35 +909,8 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
     memset(BC_temp, 0.0f, sizeof(float) * newnode_size);
     
     #pragma region BC
-    //Traverse
-    // find side vertex for each nodes
-    int n_id_compare=0;
-    int*   new_ID_side = (int*)malloc(newnode_size* sizeof(int)); 
-    bool*   new_ID_merged = (bool*)malloc(newnode_size* sizeof(bool));
-    memset(new_ID_side, 0, sizeof(int) * newnode_size);
-    memset(new_ID_merged, false, sizeof(bool) * newnode_size);
-    for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-        n_id_compare=0;
-        if(new_ID_merged[sourceNewID]) continue;
-        for(int new_nidx = _csr->orderedCsrV[sourceNewID] ; new_nidx < _csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++) {
-            int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
-            n_id_compare^=new_nid;
-        }
-        for(int sourceNewID_merge = 0 ; sourceNewID_merge <= _csr->newEndID ; sourceNewID_merge ++){
-            int n_id_compare_temp = n_id_compare;
-            if(sourceNewID_merge == sourceNewID || new_ID_merged[sourceNewID_merge])continue;
-            
-            for(int new_nidx = _csr->orderedCsrV[sourceNewID_merge] ; new_nidx < _csr->orderedCsrV[sourceNewID_merge + 1] ; new_nidx ++) {
-                int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
-                n_id_compare_temp^=new_nid;
-            }
-            if(n_id_compare_temp == 0 || n_id_compare_temp == (sourceNewID^sourceNewID_merge)){
-                new_ID_side[sourceNewID]+=1;
-                new_ID_merged[sourceNewID_merge]=true;
-            }
-        }
 
-    }
+    
     // printf("finish side vertex\n");
     int count =0;
     for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
@@ -1015,29 +996,6 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
             BC_temp[w] += delta[w] * newID_infos[sourceNewID].w ; // + (newID_infos[sourceNewID].w * (delta[w]-(newID_infos[w].w-1)))
         }
 
-
-        //BC紀錄值到舊的ID的位置(都分身，暫時沒有)
-        // if(sourceType & ClonedAP ){
-        //     int source_oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-        //     _BCs[source_oldID] += (delta[sourceNewID] - ((float)newID_infos[sourceNewID].w - 1.0f) )* (float)(newID_infos[sourceNewID].w - 1); //累加
-        //     // printf("Source ADD: newID %d, oldID %d\n", sourceNewID, source_oldID);
-        //     //- ((float)newID_infos[sourceNewID].w - 1.0f)
-        // }
-        
-
-
-        // for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-        //     int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-        //     int sourceType1 = _csr->nodesType[oldID];
-        //     if(sourceType1 & ClonedAP){
-        //         printf("[ClonedAP] ");
-        //         // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
-        //     }else{
-        //         printf("[normal] ");
-        //     }
-        //     printf("newID %d, oldID %d, delta: %.2f, BC_old[%d]: %.2f\n", sourceNewID, oldID,delta[sourceNewID],oldID ,_BCs[oldID]);
-        // }
-
     }
     
     #pragma endregion 
@@ -1119,251 +1077,125 @@ void compute_D1_AP_BC(struct CSR* _csr, float* _BCs){
 
 }
 
-
-void compute_D1_AP_BC_compress(struct CSR* _csr, float* _BCs){
-    // int V=_csr->csrVSize;
+__global__ void BC_brandes(int startID,int V,int* CsrV,int* CsrE, int* sigma,int* dist, float* delta, int *Q, int *Q2, int *S,int* S_offset,newID_info* newID_infos, int pitch_d,int pitch_sigma,int pitch_delta,int pitch_Q,int pitch_Q2,int pitch_S){
+    const int sourceNewID = startID + blockIdx.x; //分批起始的ID
+    int idx   = threadIdx.x;
+    int *d_row = (int*)((char*)dist + blockIdx.x*pitch_d);
+	int *sigma_row = (int*)((char*)sigma + blockIdx.x*pitch_sigma);
+	float *delta_row = (float*)((char*)delta + blockIdx.x*pitch_delta);
+    __shared__ int *Q_row;
+	__shared__ int *Q2_row;
+    __shared__ int *S_row;
     
-
-    //D1 Folding
-    D1Folding(_csr);
-    //AP Process
-    AP_detection(_csr);
-    AP_Copy_And_Split(_csr); //先計算ap本尊的CC
-    struct newID_info* newID_infos = rebuildGraph(_csr);
-
-    int newnode_size = _csr->newEndID+1;
-    // Allocate memory for sigma, dist, delta, and the stack S
-    int*   S      = (int*)malloc(newnode_size* sizeof(int));      // S is a 2D array (stack)
-    int*   sigma  = (int*)malloc(newnode_size* sizeof(int));     // sigma is a 1D array
-    int*   dist   = (int*)malloc(newnode_size* sizeof(int));      // dist is a 1D array
-    float* delta  = (float*)malloc(newnode_size* sizeof(float)); // delta is a 1D array
-    int*   S_size = (int*)malloc(newnode_size* sizeof(int));    // S_size records the size of each level
-    int*   f1     = (int*)malloc(newnode_size * sizeof(int));
-    int*   f2     = (int*)malloc(newnode_size * sizeof(int));
-    int    f1_indicator;
-    int    f2_indicator;
-    int    S_indicator =0;
-    float*   BC_temp = (float*)malloc(newnode_size* sizeof(float));      //存放切AP後的graph，各個點的BC值，方便在最後階段把正確BC值累加至原始graph的BC
-    memset(BC_temp, 0.0f, sizeof(float) * newnode_size);
-    
-    #pragma region BC
-    //Traverse
-    // find side vertex for each nodes
-    int n_id_compare=0;
-    int*   new_ID_side = (int*)malloc(newnode_size* sizeof(int)); 
-    bool*   new_ID_merged = (bool*)malloc(newnode_size* sizeof(bool));
-    memset(new_ID_side, 0, sizeof(int) * newnode_size);
-    memset(new_ID_merged, false, sizeof(bool) * newnode_size);
-    for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-        n_id_compare=0;
-        if(new_ID_merged[sourceNewID]) continue;
-        for(int new_nidx = _csr->orderedCsrV[sourceNewID] ; new_nidx < _csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++) {
-            int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
-            n_id_compare^=new_nid;
-        }
-        for(int sourceNewID_merge = 0 ; sourceNewID_merge <= _csr->newEndID ; sourceNewID_merge ++){
-            int n_id_compare_temp = n_id_compare;
-            if(sourceNewID_merge == sourceNewID || new_ID_merged[sourceNewID_merge])continue;
-            
-            for(int new_nidx = _csr->orderedCsrV[sourceNewID_merge] ; new_nidx < _csr->orderedCsrV[sourceNewID_merge + 1] ; new_nidx ++) {
-                int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
-                n_id_compare_temp^=new_nid;
-            }
-            if(n_id_compare_temp == 0 || n_id_compare_temp == (sourceNewID^sourceNewID_merge)){
-                new_ID_side[sourceNewID]+=1;
-                new_ID_merged[sourceNewID_merge]=true;
-            }
-        }
-
+    if(sourceNewID >= V) return;
+    // printf("===============sourceNewID: %d=================\n",sourceNewID);
+    //Initialization
+    if(idx ==0){
+        Q_row = (int*)((char*)Q + blockIdx.x*pitch_Q);
+		Q2_row = (int*)((char*)Q2 + blockIdx.x*pitch_Q2);
+		S_row = (int*)((char*)S + blockIdx.x*pitch_S);
     }
-    // printf("finish side vertex\n");
-    int count =0;
-    for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-        
-        int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-        int sourceType = _csr->nodesType[oldID];
-        // printf("sourceNewID: %d oldID: %d\n",sourceNewID,oldID);
-        count++;
-        //變數值使用NewID
-        for (int i = 0; i <= _csr->newEndID; i++) {
-            sigma[i] =  0;
-            dist[i]  = -1;
-            //照該node的reach點數來初始，代表其他點看到這點至少看過reach-1個點在這個node之後。
-            delta[i] = (float)newID_infos[i].w - 1.0f;
-        }
+    __syncthreads();
+	for(int k=threadIdx.x; k<V; k+=blockDim.x)
+	{
+		if(k == sourceNewID) //If k is the source node
+		{
+			sigma_row[sourceNewID] = 1;
+            d_row[sourceNewID]  = 0;
+		}
+		else
+		{
+			sigma_row[k] =  0;
+            d_row[k]  = -1;
+		}	
+		delta_row[k] = (float)newID_infos[k].w - 1.0f;
+	}
+    __syncthreads();
 
-        //initial value
-        sigma[sourceNewID] = 1;
-        dist[sourceNewID]  = 0;
-        f1_indicator       = 0;
-        f2_indicator       = 0;
-        S_indicator        = 0;
-        f1[f1_indicator++] = sourceNewID;
-        int level = 0;
+    // for(int k=threadIdx.x; k<V; k+=blockDim.x){
+    //     printf("sourceNewID: %d  d_row[%d]: %d  sigma_row[%d]: %d delta_row[%d]: %.2f\n",sourceNewID,k,d_row[k],k,sigma_row[k],k,delta_row[k]);
+    // }
 
-        // printf("===========Source(new): %d type: %d===========\n",sourceNewID,sourceType);
-        //forward traverse
-        while (f1_indicator>0){ 
-            // printf("level: %d\n queue: ",level);
-            // Allocate new memory for next_queue in each iteration
-            int* currentQueue;
-            int* nextQueue;
+    //Shortest Path Calculation
+    __shared__ int level;
+	__shared__ int Q_len;
+	__shared__ int Q2_len;
+	__shared__ int S_len;
+	__shared__ int current_depth; 
+    if(idx == 0){
+		Q_row[0] = sourceNewID;
+		Q_len = 1;
+		Q2_len = 0;
+		S_row[0] = sourceNewID;
+		S_len = 1;
+		current_depth = 0;
+        level = 0;
+	}
+	__syncthreads();
+
+    __shared__ int* currentQueue;
+    __shared__ int* nextQueue;
+    //forward traverse
+    while(Q_len>0){
+        if(idx==0){
             if(level% 2 == 0){
-                currentQueue = f1;
-                nextQueue = f2;
+                currentQueue = Q;
+                nextQueue = Q2;
             }
             else{
-                currentQueue = f2;
-                nextQueue = f1;
+                currentQueue = Q2;
+                nextQueue = Q;
             }
-            
-            for(int v=0; v<f1_indicator; v++) {
-                int curNewID = currentQueue[v];
-                S[S_indicator++] = curNewID;  // Put node u into its level
-                // printf("%d ",curNewID);
-                // Traverse the adjacent nodes in CSR format
-                for(int new_nidx = _csr->orderedCsrV[curNewID] ; new_nidx < _csr->orderedCsrV[curNewID + 1] ; new_nidx ++) {
-                    int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
-                    // If w has not been visited, update distance and add to next_queue
-                    if (dist[new_nid] < 0) {
-                        dist[new_nid] = dist[curNewID] + 1;
-                        nextQueue[f2_indicator++] = new_nid;
-                    }
-                    // When a shortest path is found
-                    if (dist[new_nid] == dist[curNewID] + 1) {
-                        sigma[new_nid] += sigma[curNewID];
-                    }
+        }
+        
+        for(int v= threadIdx.x; v<Q_len; v+=blockDim.x) {
+            int curNewID = currentQueue[v];
+            S_row[S_len+v]=curNewID;
+            // // printf("%d ",curNewID);
+            // // Traverse the adjacent nodes in CSR format
+            for(int new_nidx = CsrV[curNewID] ; new_nidx < CsrV[curNewID + 1] ; new_nidx ++) {
+                int nid = CsrE[new_nidx];
+                if(atomicCAS(&d_row[nid],-1,d_row[curNewID]+1) == -1){
+					int t = atomicAdd(&Q2_len,1);
+					Q2_row[t] = nid;
+				}
+
+                if(d_row[nid] == d_row[curNewID]+1){
+                    atomicAdd(&sigma_row[nid],sigma_row[curNewID]);
                 }
             }
-            // printf("\n");
-            // Free current_queue and set it to next_queue for the next iteration
-            f1_indicator = f2_indicator;
-            f2_indicator = 0;
+            // for(int new_nidx = _csr->orderedCsrV[curNewID] ; new_nidx < _csr->orderedCsrV[curNewID + 1] ; new_nidx ++) {
+            //     int new_nid = _csr->orderedCsrE[new_nidx]; //new_nid為curNewID的鄰居
+            //     // If w has not been visited, update distance and add to next_queue
+            //     if (dist[new_nid] < 0) {
+            //         dist[new_nid] = dist[curNewID] + 1;
+            //         nextQueue[f2_indicator++] = new_nid;
+            //     }
+            //     // When a shortest path is found
+            //     if (dist[new_nid] == dist[curNewID] + 1) {
+            //         sigma[new_nid] += sigma[curNewID];
+            //     }
+            // }
+        }
+        __syncthreads();
+
+        if(idx==0){
+            Q_len=0;
             level++;
         }
-
-
-        //backward
-        for (int d = S_indicator - 1; d > 0; --d) {  // Start from the furthest level
-            int w = S[d];
-            // oldID = _csr->mapNodeID_New_to_Old[w];
-
-            // for(int v: predecessors[w]){
-            //     delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
-            // }
-            for(int new_nidx = _csr->orderedCsrV[w] ; new_nidx < _csr->orderedCsrV[w + 1] ; new_nidx ++) {
-                int v = _csr->orderedCsrE[new_nidx];
-                if (dist[v] == dist[w] - 1) {
-                    delta[v] += (sigma[v] / (float)sigma[w]) * (1.0 + delta[w]);
-                }
-            }
-            //BC_temp紀錄值到新的ID的位置 delta[w] * newID_infos[sourceNewID].w
-            BC_temp[w] += delta[w] * newID_infos[sourceNewID].w ; // + (newID_infos[sourceNewID].w * (delta[w]-(newID_infos[w].w-1)))
-        }
-
-
-        //BC紀錄值到舊的ID的位置(都分身，暫時沒有)
-        // if(sourceType & ClonedAP ){
-        //     int source_oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-        //     _BCs[source_oldID] += (delta[sourceNewID] - ((float)newID_infos[sourceNewID].w - 1.0f) )* (float)(newID_infos[sourceNewID].w - 1); //累加
-        //     // printf("Source ADD: newID %d, oldID %d\n", sourceNewID, source_oldID);
-        //     //- ((float)newID_infos[sourceNewID].w - 1.0f)
-        // }
-        
-
-
-        // for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-        //     int oldID = _csr->mapNodeID_New_to_Old[sourceNewID];
-        //     int sourceType1 = _csr->nodesType[oldID];
-        //     if(sourceType1 & ClonedAP){
-        //         printf("[ClonedAP] ");
-        //         // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
-        //     }else{
-        //         printf("[normal] ");
-        //     }
-        //     printf("newID %d, oldID %d, delta: %.2f, BC_old[%d]: %.2f\n", sourceNewID, oldID,delta[sourceNewID],oldID ,_BCs[oldID]);
-        // }
-
+        __syncthreads();
     }
-    
-    #pragma endregion 
-    printf("count: %d\n",count);
-
-    #pragma region ptintValue
-
-    // for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-    //     int oldID = _csr->mapNodeID_New_to_Ori[sourceNewID];
-    //     int sourceType = _csr->nodesType[_csr->mapNodeID_New_to_Old[sourceNewID]];
-
-    //     if(sourceType & ClonedAP){
-    //         printf("[ClonedAP] ");
-    //         // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
-    //     }else{
-    //         printf("[normal] ");
-    //     }
-    //     printf("newID %d, oldID %d, type %x, R_old:%d, ff_old:%d, R_new:%d, ff_new:%d\nneighbor{", sourceNewID, oldID, sourceType,_csr->representNode[oldID],_csr->ff[oldID],newID_infos[sourceNewID].w,newID_infos[sourceNewID].ff);
-
-    //     for(int new_nidx = _csr->orderedCsrV[sourceNewID] ; new_nidx < _csr->orderedCsrV[sourceNewID + 1] ; new_nidx ++) {
-    //         int new_nid = _csr->orderedCsrE[new_nidx]; //w為u的鄰居
-    //         printf("%d ", new_nid);
-    //     }
-    //     printf("}\n");
-    // }
-
-    // for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-    //     int oldID = _csr->mapNodeID_New_to_Ori[sourceNewID];
-    //     int sourceType = _csr->nodesType[oldID];
-
-    //     if(sourceType & ClonedAP){
-    //         printf("[ClonedAP] ");
-    //         // printf("newID %d, oldID %d, type %x\n", sourceNewID, oldID, sourceType);
-    //     }else{
-    //         printf("[normal] ");
-    //     }
-    //     printf("newID %d, oldID %d, delta: %.2f\n", sourceNewID, oldID,delta[sourceNewID] );
-
-    // }
-    #pragma endregion 
-
-    #pragma region combine value //合併oldID(切AP前 D1後)的BC至原始的ID
-
-    for(int sourceNewID = 0 ; sourceNewID <= _csr->newEndID ; sourceNewID ++){
-        int oldID = _csr->mapNodeID_New_to_Ori[sourceNewID];
-        // int sourceType = _csr->nodesType[oldID];
-        // printf("oldID = %d  sourceNewID: %d\n", oldID,sourceNewID);
-        _BCs[oldID] += BC_temp[sourceNewID];
-        
+    for(int k=threadIdx.x; k<V; k+=blockDim.x){
+        printf("sourceNewID: %d  d_row[%d]: %d  sigma_row[%d]: %d delta_row[%d]: %.2f\n",sourceNewID,k,d_row[k],k,sigma_row[k],k,delta_row[k]);
     }
-    
-    #pragma endregion
-
-    // _csr->csrNodesDegree[newApCloneID]= _csr->oriCsrV[newApCloneID + 1]-_csr->oriCsrV[newApCloneID];
-
-    #pragma region d1Node_Dist_And_CC_Recovery
-    
-    int d1NodeID        = -1;
-    int d1NodeParentID  = -1;
-    for(int d1NodeIndex = _csr->degreeOneNodesQ->rear ; d1NodeIndex >= 0 ; d1NodeIndex --){
-        d1NodeID        = _csr->degreeOneNodesQ->dataArr[d1NodeIndex];
-        d1NodeParentID  = _csr->D1Parent[d1NodeID];
-        int total_number= (_csr->csrVSize -1-_csr->startNodeID);
-        // printf("d1NodeID = %2d  ParentID = %2d  val(%.2f * %.2f): %.2f\n", d1NodeID, d1NodeParentID ,(float)(V-_csr->representNode[d1NodeID]-2 - _csr->startNodeID),(float)(_csr->representNode[d1NodeID]), (float)(V-_csr->representNode[d1NodeID]-2- _csr->startNodeID) * (_csr->representNode[d1NodeID]));
-        // printf("d1NodeID = %2d  ParentID = %2d  val(%.2f * %.2f): %.2f\n", d1NodeID, d1NodeParentID ,(float)(_csr->representNode[d1NodeID]-1),(float)(V-1-_csr->representNode[d1NodeID]), (float)(_csr->representNode[d1NodeID]-1) * (V-1-_csr->representNode[d1NodeID]));
-        _BCs[d1NodeID]  = (_csr->representNode[d1NodeID]-1) * (total_number -_csr->representNode[d1NodeID]);
-        _BCs[d1NodeParentID]  += (float)(total_number - _csr->representNode[d1NodeID] - 1) * (_csr->representNode[d1NodeID]);
-        // printf("d1NodeID = %2d, _CCs[%2d] = %2d, ParentID = %2d, _CCs[%2d] = %2d\n", d1NodeID, d1NodeID, _CCs[d1NodeID], d1NodeParentID, d1NodeParentID, _CCs[d1NodeParentID]);
-    }
-
-    
-    #pragma endregion //d1Node_Dist_And_CC_Recovery
-
-    // int oriEndNodeID = _csr->endNodeID - _csr->apCloneCount;
-    // printf("oriEndNodeID = %d\n", oriEndNodeID);
-    // for(int ID = _csr->startNodeID ; ID <= _csr->endNodeID ; ID ++){
-    //     printf("BC[%d] = %.2f\n", ID, _BCs[ID]);
-    // }
+    __syncthreads();
 
 }
+
+
+
+
+
 
 
 #pragma endregion
@@ -7491,30 +7323,33 @@ __global__ void find_S2neighbor_min_D1(int sourceID, int* newNodesID_min,int new
     #pragma region D1_AP
 //初始component內部的所有node以及source的dist & sigma(適用於有切AP的node 以下都是)
 __global__ void resetBC_value_n(int* dist,int* f1,int* sigma,float* delta,int* stack,int* level,struct newID_info* g_newID_infos ,int target,int NOneighbor,int size, int V,int* newNodesID_arr,int* comp_newCsrOffset, int compID){
-    register const int idx = threadIdx.x + blockIdx.x * blockDim.x; // [0-newendID] [newnedID+1 - 2*newnedID+2]
-    register const int comp_idx = idx + comp_newCsrOffset[compID];
-    register const int v_ID = newNodesID_arr[comp_idx];
+    const int idx = threadIdx.x + blockIdx.x * blockDim.x; // [0-newendID] [newnedID+1 - 2*newnedID+2]
+    const int comp_idx = idx + comp_newCsrOffset[compID];
+    const int v_ID = newNodesID_arr[comp_idx];
     // for (int i = _csr->comp_newCsrOffset[compID]; i < _csr->comp_newCsrOffset[compID + 1]; i++) {
     //     int v_ID = newNodesID_arr[i];
     //     sigma[NOneighbor][v_ID] =  0;
     //     dist[NOneighbor][v_ID]  = -1;
     //     delta[v_ID] = (float)newID_infos[v_ID].w - 1.0f;
     // }
-
+    const int target_r = target;
+    const int NOn_pos  = NOneighbor*V;
     if(idx < size){
-        dist[NOneighbor*V+v_ID]  = 100000;
-        sigma[NOneighbor*V+v_ID] = 0;
+        dist[NOn_pos+v_ID]  = 100000;
+        sigma[NOn_pos+v_ID] = 0;
         delta[v_ID] = (float)g_newID_infos[v_ID].w-1.0f;
         
         level[v_ID] = -1;
         f1[idx]    = -1;
     }
-    f1[0]    = target;
-    stack[0] = target;
-    if(v_ID == target){
-        dist[NOneighbor*V+v_ID]  = 0;
-        sigma[NOneighbor*V+v_ID] = 1;
+    
+    if(v_ID == target_r){
+        dist[NOn_pos+v_ID]  = 0;
+        sigma[NOn_pos+v_ID] = 1;
         level[v_ID] = 0;
+
+        f1[0]    = target_r;
+        stack[0] = target_r;
     }
     // if(idx < size){
     //     printf("dist[%d][%d]: %d\n",NOneighbor,v_ID,dist[(NOneighbor)*V+v_ID]);
@@ -9450,7 +9285,7 @@ void EXDMF_D1_DP_par( CSR* csr, float *BC) {
                 //平行跑BFS
                 for(int i=0;i<(int)ceil(currentQueueSize/(float)INT_MAX);i++){
                     allBC_n<<<blocknum,threadnum>>>(g_orderedCsrV,g_orderedCsrE,g_nextQueueSize,g_currentQueue,g_nextQueue,g_dist_n,g_sigma_n,INT_MAX,i,currentQueueSize,0,V);
-                    CHECK(cudaDeviceSynchronize());
+                    cudaDeviceSynchronize();
                 }
                 cudaMemcpy(&currentQueueSize,g_nextQueueSize,sizeof(int),cudaMemcpyDeviceToHost);
                 cudaMemcpy(&g_stack[stackOffset[level+1]],g_nextQueue,currentQueueSize*sizeof(int),cudaMemcpyDeviceToDevice);
@@ -9541,6 +9376,11 @@ void EXDMF_D1_DP_par( CSR* csr, float *BC) {
 }
 
 
+
+
+
+
+
 //D1+AP+我的
 void D1_AP_adjust( CSR* csr, float *BC) {
     
@@ -9548,7 +9388,7 @@ void D1_AP_adjust( CSR* csr, float *BC) {
     D1Folding(csr);
     AP_detection(csr);
     // AP_Copy_And_Split(csr);
-    AP_Copy_And_Split_opt(csr);
+    AP_Copy_And_Split(csr);
     printf("AP_Copy_And_Split_opt done\n");
     struct newID_info* newID_infos = rebuildGraph(csr); //rebuild graph for better memory access speed
     printf("rebulid done\n");
@@ -9640,6 +9480,179 @@ void D1_AP_adjust_ori( CSR* csr, float *BC) {
 
 
 #pragma endregion
+
+
+//D1+AP+node parallel方式
+void D1_AP_par_node( CSR* csr, float *BC){
+    
+    #pragma region Preprocess
+    D1Folding(csr);
+    AP_detection(csr);
+    AP_Copy_And_Split(csr);
+    struct newID_info* newID_infos = rebuildGraph(csr); //rebuild graph for better memory access speed
+    const int oriEndNodeID = csr->endNodeID - csr->apCloneCount; //原本graph的endNodeID
+    int V = csr->newEndID+1;
+    int OriV = csr->csrVSize+1;
+    //Sort aliveNodeID with degree
+    int* newNodesID_arr     = (int*)malloc(sizeof(int) * (csr->newEndID + 1));
+    int* newNodesDegree_arr = (int*)malloc(sizeof(int) * (csr->newEndID + 1));
+    sortEachComp_NewID_with_degree(csr, newNodesID_arr, newNodesDegree_arr);
+
+
+    int avg_degree = (int)ceil(csr->D1foldingESize/V);
+    #pragma endregion Preprocess
+    // printf("avg_degree: %d\n",avg_degree);
+    
+    #pragma region malloc_cudamalloc
+    //CPU variable
+    int    currentQueueSize;
+    int*   stackOffset = (int*)calloc(V,sizeof(int));
+    //GPU MALLOC　variable
+    int*   g_stack;      
+    int*   g_sigma;     
+    int* g_dist;
+    int*   g_level;     
+    float* g_delta; 
+    int*   g_S_size;
+    int*   g_f1;
+    int*   g_f2;
+    int*   g_nextQueueSize; //用來回傳給CPU判別currentQueueSize，是否繼續traverse
+    int* g_orderedCsrV;
+    int* g_orderedCsrE;
+    float* g_BC;
+    float* g_BC_temp;
+    // struct Single_values* g_Single_values;
+    int*   g_sigma_n;     
+    int*   g_dist_n;
+    int*   g_newNodesID_min;
+    int*   g_max_depth;
+    int* g_mapNodeID_New_to_Old;
+    int* g_mapNodeID_Old_to_New;
+    int* g_mapNodeID_Old_to_Ori;
+    int* g_comp_newCsrOffset; 
+    // int* g_newNodesCompID;
+    int* g_newNodesID_arr;
+    int* g_count_table;
+    newID_info* g_newID_infos;
+
+    // printf("start malloc\n");
+    cudaMalloc((void **)&g_stack,V * sizeof(int)); //用CPU的stack offset存每一層的位置
+    cudaMalloc((void **)&g_sigma,V * sizeof(int));
+    cudaMalloc((void **)&g_dist,V * sizeof(int));
+    cudaMalloc((void **)&g_level,V * sizeof(int));
+    cudaMalloc((void **)&g_delta,V * sizeof(float));
+    cudaMalloc((void **)&g_S_size,V*sizeof(int));
+    
+    cudaMalloc((void **)&g_f1, V * sizeof(int));
+    cudaMalloc((void **)&g_f2, V * sizeof(int));
+    cudaMalloc((void **)&g_nextQueueSize,sizeof(int));
+    cudaMalloc((void **)&g_orderedCsrV, (V+1) * sizeof(int));
+    cudaMalloc((void **)&g_orderedCsrE, csr->csrESize * sizeof(int));
+    cudaMalloc((void **)&g_BC, OriV * sizeof(float));
+    cudaMalloc((void **)&g_BC_temp, V * sizeof(float));
+    cudaMalloc((void **)&g_sigma_n, V * avg_degree * sizeof(int)); //2d array紀錄鄰居source的路徑數量
+    cudaMalloc((void **)&g_dist_n,  V * avg_degree * sizeof(int)); //2d array紀錄鄰居source的距離
+    cudaMalloc((void**)&g_mapNodeID_New_to_Old, sizeof(int) * V);
+    cudaMalloc((void**)&g_mapNodeID_Old_to_New, sizeof(int) * V);
+    cudaMalloc((void**)&g_mapNodeID_Old_to_Ori, sizeof(int) * V);
+    cudaMalloc((void**)&g_comp_newCsrOffset, sizeof(int) * csr->aliveNodeCount);
+    cudaMalloc((void**)&g_newNodesID_arr, sizeof(int) * V);
+    cudaMalloc((void**)&g_count_table, sizeof(int) * V);
+    cudaMalloc((void**)&g_newNodesID_min, sizeof(int) * V);
+    cudaMalloc((void**)&g_newID_infos, sizeof(newID_info) * V);
+    cudaMalloc((void**)&g_max_depth, sizeof(int));
+    cudaMemcpy(g_orderedCsrV , csr->orderedCsrV ,  (V+1) * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemcpy(g_orderedCsrE , csr->orderedCsrE ,  csr->csrESize * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemcpy(g_newID_infos, newID_infos, sizeof(struct newID_info) * V, cudaMemcpyHostToDevice);
+    cudaMemcpy(g_comp_newCsrOffset , csr->comp_newCsrOffset ,  csr->aliveNodeCount * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemcpy(g_newNodesID_arr , newNodesID_arr,  V * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemcpy(g_mapNodeID_New_to_Old , csr->mapNodeID_New_to_Old,  V * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemcpy(g_mapNodeID_Old_to_Ori , csr->mapNodeID_New_to_Ori,  V * sizeof(int),cudaMemcpyHostToDevice);
+    cudaMemset(g_BC, 0.0f, V * sizeof(float));
+    cudaMemset(g_BC_temp, 0.0f, V * sizeof(float));
+
+    dim3 gridDim;
+    dim3 blockDim;
+    gridDim.x=82; //SM of RTX3090
+    blockDim.x =1024;
+
+    
+    int *d_d,*sigma_d,*Q_d, *Q2_d,*S_d,*S_offset_d;
+    float* delta_d;
+    size_t pitch_d, pitch_sigma, pitch_delta, pitch_Q, pitch_Q2, pitch_S, pitch_offset;
+    cudaMallocPitch((void**)&d_d,&pitch_d,sizeof(int)*V,gridDim.x);
+	cudaMallocPitch((void**)&sigma_d,&pitch_sigma,sizeof(unsigned long long)*V,gridDim.x);
+	cudaMallocPitch((void**)&delta_d,&pitch_delta,sizeof(float)*V,gridDim.x);
+	cudaMallocPitch((void**)&Q_d,&pitch_Q,sizeof(int)*V,gridDim.x); //Making Queues/Stack of size O(n) since we won't duplicate
+	cudaMallocPitch((void**)&Q2_d,&pitch_Q2,sizeof(int)*V,gridDim.x);
+	cudaMallocPitch((void**)&S_d,&pitch_S,sizeof(int)*V,gridDim.x);
+    cudaMallocPitch((void**)&S_offset_d,&pitch_offset,sizeof(int)*V,gridDim.x);
+
+    #pragma endregion
+    // printf("end malloc\n");
+    // std::cout << "Total GPU memory: " << total_byte / (1024.0 * 1024.0) << " MB" << std::endl;
+    // std::cout << "Free GPU memory: " << free_byte / (1024.0 * 1024.0) << " MB" << std::endl;
+    int threadnum = 32;
+    int max_depth=0;
+    int* Vertex_computed = (int*)calloc(sizeof(int*),V);
+
+    
+    //sourceID做完
+    for(int sourceNewID = 0 ; sourceNewID <= csr->newEndID ; sourceNewID +=gridDim.x){
+        // printf("============time: %d==================\n",sourceNewID/gridDim.x);
+        // int oldID = csr->mapNodeID_New_to_Old[sourceNewID];
+        BC_brandes<<<gridDim,blockDim>>>(sourceNewID,V,g_orderedCsrV,g_orderedCsrE,sigma_d,d_d,delta_d,Q_d,Q2_d,S_d,S_offset_d,g_newID_infos,pitch_d,pitch_sigma,pitch_delta,pitch_Q,pitch_Q2,pitch_S);
+        cudaDeviceSynchronize();
+
+    }
+
+    //合併BC_temp到BC
+    #pragma region combine_value //合併oldID(切AP前 D1後)的BC至原始的ID
+
+    combine_BC<<<ceil(V/64.0),min(V,64)>>>(g_BC,g_BC_temp,g_mapNodeID_Old_to_Ori,V);
+    CHECK(cudaDeviceSynchronize());
+
+    // printf("[ g_BC]\n");
+    // printArray_float_n<<<ceil(V/64.0),min(V,64)>>>(g_BC,V,0);
+    // CHECK(cudaDeviceSynchronize());
+
+    cudaMemcpy(&BC[0], g_BC ,  OriV * sizeof(float),cudaMemcpyDeviceToHost);
+    #pragma endregion
+
+    // for(int i=0;i<OriV;i++){
+    //     printf("BC[ %d] = %.2f\n", i, BC[i]);
+    // }
+
+    #pragma region d1Node_Dist_And_CC_Recovery
+    V = csr->csrVSize;
+    int d1NodeID        = -1;
+    int d1NodeParentID  = -1;
+    for(int d1NodeIndex = csr->degreeOneNodesQ->rear ; d1NodeIndex >= 0 ; d1NodeIndex --){
+        d1NodeID        = csr->degreeOneNodesQ->dataArr[d1NodeIndex];
+        d1NodeParentID  = csr->D1Parent[d1NodeID];
+        int total_number= (V-1-csr->startNodeID);
+        // printf("[before] BC[d1NodeID %d] = %.2f, BC[ParentID %d] = %.2f\n", d1NodeID, BC[d1NodeID],d1NodeParentID, BC[d1NodeParentID]);
+        BC[d1NodeID]  = (csr->representNode[d1NodeID]-1) * (total_number - csr->representNode[d1NodeID]);
+        BC[d1NodeParentID]  += (float)(total_number - csr->representNode[d1NodeID] - 1) * (csr->representNode[d1NodeID]);
+        // printf("[After] BC[d1NodeID %d] = %.2f, BC[ParentID %d] = %.2f\n", d1NodeID, BC[d1NodeID],d1NodeParentID, BC[d1NodeParentID]);
+        
+       
+    }
+    #pragma endregion //d1Node_Dist_And_CC_Recovery
+
+    
+    // Free memory for S and its levels
+    free(stackOffset);
+    cudaFree(g_sigma);
+    cudaFree(g_delta);
+    cudaFree(g_stack);
+    cudaFree(g_level);
+    cudaFree(g_dist);
+    cudaFree(g_f1);
+    cudaFree(g_f2);
+    cudaFree(g_nextQueueSize);
+    cudaFree(g_BC);
+}
 
 //************************************************ */
 //                   平行程式 MS
